@@ -1,0 +1,38 @@
+# ---- Investing agent configuration ----
+capital_cad: 1000          # starting money; also the baseline for the kill switch
+max_equity_cad: 2000       # hard ceiling: the agent never manages more than this, even if the account holds more
+
+# Everything the agent is allowed to buy. All are CAD-denominated TSX ETFs,
+# so there is no currency conversion. `moomoo` is the symbol on moomoo.
+universe:
+  - {ticker: VFV.TO,   moomoo: CA.VFV,   name: "S&P 500 (US large cap)"}
+  - {ticker: ZQQ.TO,   moomoo: CA.ZQQ,   name: "Nasdaq-100 (CAD hedged)"}
+  - {ticker: XIU.TO,   moomoo: CA.XIU,   name: "S&P/TSX 60 (Canada large cap)"}
+  - {ticker: XEF.TO,   moomoo: CA.XEF,   name: "International developed markets"}
+  - {ticker: XEC.TO,   moomoo: CA.XEC,   name: "Emerging markets"}
+  - {ticker: ZAG.TO,   moomoo: CA.ZAG,   name: "Canadian aggregate bonds"}
+  - {ticker: CGL-C.TO, moomoo: CA.CGL.C, name: "Gold bullion"}
+  - {ticker: CASH.TO,  moomoo: CA.CASH,  name: "High-interest savings (cash parking)"}
+cash_ticker: CASH.TO       # exempt from the per-position cap
+
+risk:
+  max_position_weight: 0.40   # no single ETF above 40% (except cash_ticker)
+  min_trade_cad: 25           # ignore tiny trades
+  no_trade_band: 0.03         # ignore drifts smaller than 3% of the portfolio
+  limit_slippage: 0.003       # limit orders priced 0.3% through the last price
+  max_drawdown: 0.20          # kill switch: down 20% from capital_cad -> sell all, halt
+
+claude:
+  enabled: true               # needs ANTHROPIC_API_KEY; otherwise the rules strategy is used
+  model: claude-opus-5-5
+  effort: high
+
+paper:
+  commission_cad: 0.0         # per order, simulated
+
+moomoo:
+  host: 127.0.0.1
+  port: 11111                 # OpenD gateway
+  security_firm: FUTUCA       # Moomoo Financial Canada
+  acc_id: 0                   # 0 = first account; set this if you have several
+  fill_wait_seconds: 30       # wait after sells before buying

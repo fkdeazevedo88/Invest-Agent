@@ -1,0 +1,5 @@
+anthropic
+moomoo-api
+pyyaml
+requests
+pydantic
