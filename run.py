@@ -41,16 +41,19 @@ def recent_decisions(n=3) -> list:
 def account(broker, prices, cfg):
     cash, pos = broker.cash(), broker.positions()
     value = {t: q * prices[t] for t, q in pos.items()}
-    equity = cash + sum(value.values())
-    return cash, pos, value, equity
+    held = broker.reserved()
+    equity = cash + sum(value.values()) + held
+    return cash, pos, value, equity, held
 
 
-def show(cash, pos, value, equity, cfg):
+def show(cash, pos, value, equity, held, cfg):
     start = cfg["capital_cad"]
     print(f"\nEquity ${equity:,.2f} CAD  ({(equity / start - 1) * 100:+.2f}% vs ${start:,.0f} start)")
     for t in sorted(value, key=value.get, reverse=True):
         print(f"  {t:<9} {pos[t]:>4} sh  ${value[t]:>8,.2f}  {value[t] / equity * 100:5.1f}%")
     print(f"  {'cash':<9}          ${cash:>8,.2f}  {cash / equity * 100:5.1f}%")
+    if held:
+        print(f"  {'in orders':<9}          ${held:>8,.2f}  {held / equity * 100:5.1f}%  (waiting to fill)")
 
 
 def plan_orders(target, pos, prices, equity, cfg):
@@ -81,10 +84,13 @@ def cycle(args, cfg):
     snap = data.snapshot(tickers)
     prices = {t: d["price"] for t, d in snap.items()}
 
-    broker = MoomooBroker(cfg) if args.live else PaperBroker(cfg, STATE)
+    broker = MoomooBroker(cfg, STATE) if args.live else PaperBroker(cfg, STATE)
     try:
-        cash, pos, value, equity = account(broker, prices, cfg)
-        show(cash, pos, value, equity, cfg)
+        cash, pos, value, equity, held = account(broker, prices, cfg)
+        show(cash, pos, value, equity, held, cfg)
+        if broker.pending():
+            print(f"\n{len(broker.pending())} earlier order(s) still waiting to fill. Not trading until they finish (DAY orders expire at market close).")
+            return
         slip = cfg["risk"]["limit_slippage"]
         log = {"time": dt.datetime.now(dt.timezone.utc).isoformat(), "mode": "live" if args.live else "paper", "equity_before": round(equity, 2)}
 
@@ -134,11 +140,13 @@ def cycle(args, cfg):
             if not args.dry_run:
                 executed.append({"side": "BUY", "ticker": t, "qty": q, **broker.place(t, "BUY", q, limit)})
 
+        if buys and broker.live and not args.dry_run:
+            broker.settle()  # give buy orders a moment to fill before showing the result
         if args.dry_run:
             print("\n(dry run: nothing placed, nothing recorded)")
             return
-        cash, pos, value, equity = account(broker, prices, cfg)
-        show(cash, pos, value, equity, cfg)
+        cash, pos, value, equity, held = account(broker, prices, cfg)
+        show(cash, pos, value, equity, held, cfg)
         log.update(source=source, rationale=rationale, target={t: round(w, 4) for t, w in target.items()}, orders=executed, equity_after=round(equity, 2))
         with JOURNAL.open("a") as f:
             f.write(json.dumps(log) + "\n")
@@ -149,7 +157,7 @@ def cycle(args, cfg):
 def status(args, cfg):
     STATE.mkdir(exist_ok=True)
     prices = {u["ticker"]: data.fetch(u["ticker"])["price"] for u in cfg["universe"]}
-    broker = MoomooBroker(cfg) if args.live else PaperBroker(cfg, STATE)
+    broker = MoomooBroker(cfg, STATE) if args.live else PaperBroker(cfg, STATE)
     try:
         show(*account(broker, prices, cfg), cfg)
     finally:

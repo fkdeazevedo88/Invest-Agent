@@ -72,6 +72,11 @@ export MOOMOO_TRADE_PASSWORD=123456
 
 **moomoo has no paper trading for Canadian stocks**, so `--live` is always real money.
 
+**Sharing an account with your own investments is safe.** The agent keeps its own record
+(`state/live_ledger.json`) of the cash it was given (`capital_cad`) and the shares it bought. It only
+ever spends that cash and sells those shares, even if you own the same ETFs yourself. Don't delete
+or edit that file, and don't move the agent's folder, or it loses track of what it owns.
+
 ## Running it automatically every week
 
 On the computer running OpenD, add a cron job (`crontab -e`). This runs Wednesdays at 10:30 Toronto time:
@@ -86,6 +91,7 @@ CRON_TZ=America/Toronto
 - This is a diversified, trend-following ETF strategy. It aims for steady growth with smaller crashes.
   It will not double your money fast, and nothing can guarantee a profit. You can lose money.
 - With $1,000, only whole shares are bought, so some cash stays unused (about 15% at today's prices).
-- Orders are limit orders 0.3% from the last price. On a fast-moving day some may not fill. The next
-  run picks up whatever is left.
+- Orders are limit orders 0.3% from the last price. On a fast-moving day some may not fill. While an
+  order is still waiting, the agent won't trade again; unfilled orders expire at market close and the
+  next run picks up whatever is left.
 - To stop everything: don't run it, or create a file named `state/HALT`.
