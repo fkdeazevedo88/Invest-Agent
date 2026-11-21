@@ -72,10 +72,34 @@ export MOOMOO_TRADE_PASSWORD=123456
 
 **moomoo has no paper trading for Canadian stocks**, so `--live` is always real money.
 
-**Sharing an account with your own investments is safe.** The agent keeps its own record
-(`state/live_ledger.json`) of the cash it was given (`capital_cad`) and the shares it bought. It only
-ever spends that cash and sells those shares, even if you own the same ETFs yourself. Don't delete
-or edit that file, and don't move the agent's folder, or it loses track of what it owns.
+### Safety rule: `--live` never sells anything the agent didn't buy
+
+The agent can share an account with your own investments. It keeps its own record
+(`state/live_ledger.json`) of the cash it was given (`capital_cad`) and the shares it bought, and
+right before every order it checks:
+
+- **Only its own ETFs.** It refuses to trade anything not listed in `config.yaml`, whatever its
+  ledger says.
+- **Only its own shares.** A sell is capped at the smaller of: the shares its ledger says it bought,
+  and the shares moomoo says are really in the account. With no ledger, it owns nothing and sells
+  nothing. If you hold the same ETF yourself, your shares are left alone.
+- **Only its own cash.** A buy is capped at the ledger's cash (starting at `capital_cad`).
+- **Written down before sending.** Each order goes into the ledger, with a unique tag, before it is
+  sent to moomoo. If the program or connection dies mid-order, the next run finds the order in
+  moomoo's history by that tag, so it can never forget a sale and sell again.
+- **One run at a time.** A lock file (`state/run.lock`) stops a scheduled run and a manual run from
+  overlapping. If a run crashes, the lock clears itself after an hour.
+- **Waits for open orders.** While an earlier order is unfinished, it doesn't trade.
+
+Don't delete or edit `state/live_ledger.json`, and don't move the agent's folder. If the ledger is
+lost, the agent forgets what it bought: it will then sell nothing (safe), but it will treat its
+leftover shares as yours.
+
+These rules are covered by automatic tests against a simulated account:
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+```
 
 ## Running it automatically every week
 

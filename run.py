@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from agent import data, strategy
-from agent.brokers import BrokerError, MoomooBroker, PaperBroker
+from agent.brokers import BrokerError, MoomooBroker, PaperBroker, RunLock
 
 ROOT = Path(__file__).parent
 STATE = ROOT / "state"
@@ -173,8 +173,10 @@ def main():
     p.add_argument("--dry-run", action="store_true", help="show the decision and orders without placing them")
     args = p.parse_args()
     cfg = yaml.safe_load((ROOT / "config.yaml").read_text())
+    STATE.mkdir(exist_ok=True)
     try:
-        (cycle if args.command == "run" else status)(args, cfg)
+        with RunLock(STATE / "run.lock"):
+            (cycle if args.command == "run" else status)(args, cfg)
     except (BrokerError, data.DataError) as e:
         sys.exit(f"Stopped, nothing further done: {e}")
 

@@ -3,3 +3,4 @@ moomoo-api
 pyyaml
 requests
 pydantic
+tzdata
