@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from agent import brokers, strategy  # noqa: E402
-from agent.brokers import ORDER_COLUMNS, BrokerError, MoomooBroker, RunLock  # noqa: E402
+from agent.brokers import ORDER_COLUMNS, BrokerError, MoomooBroker, RunLock, list_accounts  # noqa: E402
 import run  # noqa: E402
 
 PRICES = {
@@ -337,6 +337,16 @@ class LiveSafetyTest(unittest.TestCase):
         with self.assertRaises(BrokerError):
             b.place("XIU.TO", "SELL", 1, 54.0)
         self.assertEqual(b.positions().get("XIU.TO", 0), 0)
+
+    def test_accounts_command_shows_the_choice(self):
+        self.account()
+        self.cfg["moomoo"]["account_type"] = "MARGIN"
+        text = list_accounts(self.cfg)
+        self.assertIn("MARGIN", text)
+        self.assertIn("The agent will use: MARGIN account 111", text)
+        self.assertNotIn("999", text)            # paper-trading accounts are not listed
+        self.cfg["moomoo"]["account_type"] = "RRSP"
+        self.assertIn("will NOT trade", list_accounts(self.cfg))
 
     def test_only_one_run_at_a_time(self):
         lock = self.tmp / "run.lock"

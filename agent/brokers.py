@@ -178,7 +178,8 @@ def choose_account(ctx, m: dict) -> tuple[int, str]:
 
 def list_accounts(cfg: dict) -> str:
     """Show the accounts OpenD can see and which one the agent would use (no trading, no password)."""
-    ctx = open_trade_context(cfg["moomoo"])
+    m = cfg["moomoo"]
+    ctx = open_trade_context(m)
     try:
         text = "Your moomoo accounts:\n" + describe(real_accounts(ctx))
         try:
