@@ -249,6 +249,14 @@ class LiveSafetyTest(unittest.TestCase):
         self.cycle(self.BUY_THREE)               # still waiting: must not order again
         self.assertEqual(len(acct.today), orders)
 
+    def test_market_closed_blocks_live_orders_but_not_a_dry_run(self):
+        acct = self.account(**{"CA.XIU": 10})
+        with mock.patch.object(run, "market_open", lambda: False):
+            self.cycle(self.BUY_THREE, dry_run=True)       # allowed: places nothing
+            with self.assertRaises(SystemExit):
+                self.cycle(self.BUY_THREE)                 # real orders: refused
+        self.assertEqual(acct.today, [])
+
     def test_dry_run_places_nothing(self):
         acct = self.account(**{"CA.XIU": 10})
         self.cycle(self.BUY_THREE, dry_run=True)

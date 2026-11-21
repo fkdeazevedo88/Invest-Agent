@@ -83,7 +83,7 @@ def cycle(args, cfg):
     STATE.mkdir(exist_ok=True)
     if HALT.exists():
         sys.exit(f"HALTED by kill switch: {HALT.read_text().strip()}\nReview, then delete {HALT} to resume.")
-    if args.live and not market_open():
+    if args.live and not args.dry_run and not market_open():
         sys.exit("TSX is closed (or within 5 min of open/close). Live orders only go out during market hours.")
 
     tickers = [u["ticker"] for u in cfg["universe"]]
