@@ -40,14 +40,16 @@ def recent_decisions(n=3) -> list:
 
 
 def account(broker, prices, cfg):
-    cash, pos = broker.cash(), broker.positions()
+    """The agent's own money, from its records: its cash, its shares, and what's held
+    by open orders. `spendable` is the cash it can use right now (never borrowed)."""
+    cash, pos, spendable = broker.own_cash(), broker.positions(), broker.cash()
     value = {t: q * prices[t] for t, q in pos.items()}
     held = broker.reserved()
     equity = cash + sum(value.values()) + held
-    return cash, pos, value, equity, held
+    return cash, pos, value, equity, held, spendable
 
 
-def show(cash, pos, value, equity, held, cfg):
+def show(cash, pos, value, equity, held, spendable, cfg):
     start = cfg["capital_cad"]
     print(f"\nEquity ${equity:,.2f} CAD  ({(equity / start - 1) * 100:+.2f}% vs ${start:,.0f} start)")
     for t in sorted(value, key=value.get, reverse=True):
@@ -55,6 +57,9 @@ def show(cash, pos, value, equity, held, cfg):
     print(f"  {'cash':<9}          ${cash:>8,.2f}  {cash / equity * 100:5.1f}%")
     if held:
         print(f"  {'in orders':<9}          ${held:>8,.2f}  {held / equity * 100:5.1f}%  (waiting to fill)")
+    if spendable < cash - 0.01:
+        print(f"  Note: only ${max(spendable, 0):,.2f} of the agent's cash is in the account right now. "
+              "It never borrows, so it can only spend that.")
 
 
 def plan_orders(target, pos, prices, equity, cfg):
@@ -89,8 +94,8 @@ def cycle(args, cfg):
     try:
         if broker.live:
             print(f"Trading moomoo {broker.acc_type} account {broker.acc_id}")
-        cash, pos, value, equity, held = account(broker, prices, cfg)
-        show(cash, pos, value, equity, held, cfg)
+        cash, pos, value, equity, held, spendable = account(broker, prices, cfg)
+        show(cash, pos, value, equity, held, spendable, cfg)
         if broker.pending():
             print(f"\n{len(broker.pending())} earlier order(s) still waiting to fill. Not trading until they finish (DAY orders expire at market close).")
             return
@@ -130,7 +135,7 @@ def cycle(args, cfg):
                 executed.append({"side": "SELL", "ticker": t, "qty": q, **broker.place(t, "SELL", q, limit)})
         if sells and buys and not args.dry_run:
             broker.settle()
-        budget = (cash + sum(q * prices[t] * (1 - slip) for t, q in sells)) if args.dry_run else broker.cash()
+        budget = (spendable + sum(q * prices[t] * (1 - slip) for t, q in sells)) if args.dry_run else broker.cash()
         budget = min(budget, max(0.0, cfg["max_equity_cad"] - sum(value.values())) + sum(q * prices[t] for t, q in sells))
         for t, q in buys:
             limit = prices[t] * (1 + slip)
@@ -148,8 +153,8 @@ def cycle(args, cfg):
         if args.dry_run:
             print("\n(dry run: nothing placed, nothing recorded)")
             return
-        cash, pos, value, equity, held = account(broker, prices, cfg)
-        show(cash, pos, value, equity, held, cfg)
+        cash, pos, value, equity, held, spendable = account(broker, prices, cfg)
+        show(cash, pos, value, equity, held, spendable, cfg)
         log.update(source=source, rationale=rationale, target={t: round(w, 4) for t, w in target.items()}, orders=executed, equity_after=round(equity, 2))
         with JOURNAL.open("a") as f:
             f.write(json.dumps(log) + "\n")

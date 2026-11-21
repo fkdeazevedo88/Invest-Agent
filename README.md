@@ -49,19 +49,20 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 ## Step 2: going live on moomoo
 
-1. Open a **Moomoo Financial Canada** account and fund it. Use a TFSA so gains aren't taxed.
+1. Open a **Moomoo Financial Canada** account and fund it. (A TFSA would make gains tax-free; this
+   setup uses the margin account, where gains are taxable.)
 2. Download **OpenD** (moomoo's API gateway) from moomoo's OpenAPI page, run it on the computer
    that will run the agent, and log in. It listens on `127.0.0.1:11111`.
 3. Enable API trading in the moomoo app if it asks you to, and set your 6-digit trade password.
-4. Check which account the agent will trade. It uses your **TFSA** (`moomoo.account_type` in
-   `config.yaml`) and refuses to start if it can't tell which account that is: it never guesses or
+4. Check which account the agent will trade. It uses your **margin** account (`moomoo.account_type`
+   in `config.yaml`) and refuses to start if it can't tell which account that is: it never guesses or
    falls back to "the first account". This lists your accounts and shows its choice (no trading):
 
 ```bash
 .venv/bin/python run.py accounts
 ```
 
-   To use a different account, change `account_type` (for example `MARGIN`). Only if you have two
+   To use a different account, change `account_type` (for example `TFSA`). Only if you have two
    accounts of the same type, also set `acc_id` to the one you want. The agent's records belong to
    one account, so it refuses to run if you switch accounts later.
 5. Run a live **dry run** first (reads your real account, places nothing):
@@ -93,7 +94,9 @@ right before every order it checks:
 - **Only its own shares.** A sell is capped at the smaller of: the shares its ledger says it bought,
   and the shares moomoo says are really in the account. With no ledger, it owns nothing and sells
   nothing. If you hold the same ETF yourself, your shares are left alone.
-- **Only its own cash.** A buy is capped at the ledger's cash (starting at `capital_cad`).
+- **Only its own cash, never borrowed.** A buy is capped at the ledger's cash (starting at
+  `capital_cad`) and at the CAD cash really in the account, so in a margin account it never takes a
+  margin loan. Sells are capped at shares really held, so it never short sells.
 - **Written down before sending.** Each order goes into the ledger, with a unique tag, before it is
   sent to moomoo. If the program or connection dies mid-order, the next run finds the order in
   moomoo's history by that tag, so it can never forget a sale and sell again.

@@ -75,6 +75,9 @@ class PaperBroker:
     def cash(self) -> float:
         return self.state["cash"]
 
+    def own_cash(self) -> float:
+        return self.state["cash"]
+
     def positions(self) -> dict:
         return dict(self.state["positions"])
 
@@ -324,6 +327,11 @@ class MoomooBroker:
             "accinfo_query",
         )
         return min(float(df["ca_cash"][0]), self.ledger["cash"])
+
+    def own_cash(self) -> float:
+        """The agent's cash per its ledger. cash() is what it can actually spend right
+        now: never more than the CAD cash really in the account, so it never borrows."""
+        return self.ledger["cash"]
 
     def positions(self) -> dict:
         """The agent's shares only: never more than the ledger, never more than really held."""

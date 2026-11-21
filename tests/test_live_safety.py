@@ -91,6 +91,8 @@ class FakeCtx:
             if qty > a.pos.get(code, 0):
                 raise AssertionError(f"short sale of {qty} {code}")
             a.sells.append((code, qty))
+        elif qty * price > a.cash + 1e-9:
+            raise AssertionError(f"buying {qty} {code} needs a margin loan")
         a.ids += 1
         filled = qty if a.fill else 0
         sign = 1 if trd_side == "BUY" else -1
@@ -134,6 +136,7 @@ class LiveSafetyTest(unittest.TestCase):
         self.cfg = yaml.safe_load((ROOT / "config.yaml").read_text())
         self.cfg["claude"]["enabled"] = False
         self.cfg["moomoo"]["fill_wait_seconds"] = 0
+        self.cfg["moomoo"]["account_type"] = "TFSA"   # most tests use the TFSA (222); margin tests switch
         self.day = dt.date(2026, 11, 23)
         snap = {t: {"price": p, "signals": {}} for t, p in PRICES.items()}
         patches = [
@@ -296,6 +299,44 @@ class LiveSafetyTest(unittest.TestCase):
         with mock.patch.object(brokers.socket, "create_connection", side_effect=ConnectionRefusedError):
             with self.assertRaises(BrokerError):
                 self.cycle(self.BUY_THREE)
+
+    def test_margin_account_is_used_when_configured(self):
+        acct = self.account(**{"CA.XIU": 10})
+        self.cfg["moomoo"]["account_type"] = "MARGIN"
+        self.cycle(self.BUY_THREE)
+        self.cycle(self.ALL_CASH)
+        self.assertEqual(acct.order_accounts, {111})
+        self.assertEqual(acct.pos["CA.XIU"], 10)
+
+    def test_margin_account_never_borrows(self):
+        self.cfg["moomoo"]["account_type"] = "MARGIN"
+        acct = self.account(cash=300.0)          # less than the agent's $1,000
+        self.cycle(self.BUY_THREE)               # the fake account fails the test on any borrowing
+        self.assertGreaterEqual(acct.cash, 0)
+        acct = self.account(cash=-2000.0)        # owner already has a margin loan
+        self.tmp = Path(tempfile.mkdtemp())
+        with mock.patch.object(run, "STATE", self.tmp), mock.patch.object(run, "JOURNAL", self.tmp / "j"):
+            self.cycle(self.BUY_THREE)
+        self.assertEqual(acct.today, [])         # no cash of its own to spend: buys nothing
+
+    def test_owner_spending_cash_does_not_trigger_the_kill_switch(self):
+        self.cfg["moomoo"]["account_type"] = "MARGIN"
+        acct = self.account(**{"CA.XIU": 10})
+        self.cycle(self.BUY_THREE)
+        acct.cash = 20.0                         # owner spent the rest on their own stocks
+        self.cycle(self.BUY_THREE)
+        self.assertEqual(acct.sells, [])
+        self.assertFalse((self.tmp / "HALT").exists())
+
+    def test_margin_account_never_short_sells(self):
+        self.cfg["moomoo"]["account_type"] = "MARGIN"
+        acct = self.account(**{"CA.XIU": 10})
+        self.cycle(self.BUY_THREE)               # agent owns 6 XIU, account holds 16
+        acct.pos["CA.XIU"] = 0                   # owner sold everything by hand
+        b = MoomooBroker(self.cfg, self.tmp)
+        with self.assertRaises(BrokerError):
+            b.place("XIU.TO", "SELL", 1, 54.0)
+        self.assertEqual(b.positions().get("XIU.TO", 0), 0)
 
     def test_only_one_run_at_a_time(self):
         lock = self.tmp / "run.lock"
