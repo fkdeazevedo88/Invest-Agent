@@ -42,6 +42,12 @@ class FakeAccount:
         self.crash_after_accept = False   # order goes through, then the connection dies
         self.fail_before_send = False     # connection dies before moomoo sees the order
         self.ids = 0
+        self.accounts = [
+            {"acc_id": 111, "trd_env": "REAL", "acc_type": "MARGIN", "acc_status": "ACTIVE"},
+            {"acc_id": 222, "trd_env": "REAL", "acc_type": "TFSA", "acc_status": "ACTIVE"},
+            {"acc_id": 999, "trd_env": "SIMULATE", "acc_type": "TFSA", "acc_status": "ACTIVE"},
+        ]
+        self.order_accounts = set()               # every acc_id an order was sent to
 
     def new_day(self):
         """Market close: unfilled DAY orders expire; today's orders move to history."""
@@ -66,14 +72,18 @@ class FakeCtx:
     def unlock_trade(self, pwd):
         return 0, None
 
+    def get_acc_list(self):
+        return 0, pd.DataFrame(ACCOUNT.accounts)
+
     def accinfo_query(self, **kw):
         return 0, pd.DataFrame({"ca_cash": [ACCOUNT.cash]})
 
     def position_list_query(self, **kw):
         return 0, pd.DataFrame({"code": list(ACCOUNT.pos), "qty": list(ACCOUNT.pos.values())})
 
-    def place_order(self, price, qty, code, trd_side, remark=None, **kw):
+    def place_order(self, price, qty, code, trd_side, remark=None, acc_id=0, **kw):
         a = ACCOUNT
+        a.order_accounts.add(acc_id)
         if a.fail_before_send:
             a.fail_before_send = False
             raise ConnectionError("lost connection before the order was sent")
@@ -135,6 +145,7 @@ class LiveSafetyTest(unittest.TestCase):
             mock.patch.object(run, "market_open", lambda: True),
             mock.patch.object(run.data, "snapshot", lambda tickers: snap),
             mock.patch.object(brokers, "today", lambda: self.day.isoformat()),
+            mock.patch.object(brokers.socket, "create_connection", lambda *a, **k: mock.Mock()),
         ]
         for p in patches:
             p.start()
@@ -239,6 +250,52 @@ class LiveSafetyTest(unittest.TestCase):
         acct = self.account(**{"CA.XIU": 10})
         self.cycle(self.BUY_THREE, dry_run=True)
         self.assertEqual(acct.today, [])
+
+    def test_uses_the_tfsa_not_the_margin_account(self):
+        acct = self.account(**{"CA.XIU": 10})
+        self.cycle(self.BUY_THREE)
+        self.cycle(self.ALL_CASH)
+        self.assertEqual(acct.order_accounts, {222})
+
+    def test_refuses_when_the_chosen_account_type_is_missing(self):
+        acct = self.account()
+        acct.accounts = [a for a in acct.accounts if a["acc_type"] != "TFSA" or a["trd_env"] != "REAL"]
+        with self.assertRaises(BrokerError):
+            self.cycle(self.BUY_THREE)
+        self.assertEqual(acct.today, [])
+
+    def test_refuses_when_two_accounts_share_the_type(self):
+        acct = self.account()
+        acct.accounts.append({"acc_id": 333, "trd_env": "REAL", "acc_type": "TFSA", "acc_status": "ACTIVE"})
+        with self.assertRaises(BrokerError):
+            self.cycle(self.BUY_THREE)
+        self.cfg["moomoo"]["acc_id"] = 333       # once picked explicitly, it works
+        self.cycle(self.BUY_THREE)
+        self.assertEqual(acct.order_accounts, {333})
+
+    def test_refuses_acc_id_that_contradicts_the_type(self):
+        acct = self.account()
+        self.cfg["moomoo"]["acc_id"] = 111       # the margin account, but account_type says TFSA
+        with self.assertRaises(BrokerError):
+            self.cycle(self.BUY_THREE)
+        self.cfg["moomoo"]["acc_id"] = 12345     # an account that doesn't exist
+        with self.assertRaises(BrokerError):
+            self.cycle(self.BUY_THREE)
+        self.assertEqual(acct.today, [])
+
+    def test_ledger_cannot_be_used_on_another_account(self):
+        acct = self.account(**{"CA.XIU": 10})
+        self.cycle(self.BUY_THREE)               # ledger now belongs to the TFSA (222)
+        self.cfg["moomoo"]["account_type"] = "MARGIN"
+        with self.assertRaises(BrokerError):
+            self.cycle(self.ALL_CASH)
+        self.assertEqual(acct.order_accounts, {222})
+
+    def test_clear_error_when_opend_is_not_running(self):
+        self.account()
+        with mock.patch.object(brokers.socket, "create_connection", side_effect=ConnectionRefusedError):
+            with self.assertRaises(BrokerError):
+                self.cycle(self.BUY_THREE)
 
     def test_only_one_run_at_a_time(self):
         lock = self.tmp / "run.lock"

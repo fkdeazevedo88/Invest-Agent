@@ -53,7 +53,17 @@ export ANTHROPIC_API_KEY=sk-ant-...
 2. Download **OpenD** (moomoo's API gateway) from moomoo's OpenAPI page, run it on the computer
    that will run the agent, and log in. It listens on `127.0.0.1:11111`.
 3. Enable API trading in the moomoo app if it asks you to, and set your 6-digit trade password.
-4. If you have more than one account, put its ID in `config.yaml` under `moomoo.acc_id`.
+4. Check which account the agent will trade. It uses your **TFSA** (`moomoo.account_type` in
+   `config.yaml`) and refuses to start if it can't tell which account that is: it never guesses or
+   falls back to "the first account". This lists your accounts and shows its choice (no trading):
+
+```bash
+.venv/bin/python run.py accounts
+```
+
+   To use a different account, change `account_type` (for example `MARGIN`). Only if you have two
+   accounts of the same type, also set `acc_id` to the one you want. The agent's records belong to
+   one account, so it refuses to run if you switch accounts later.
 5. Run a live **dry run** first (reads your real account, places nothing):
 
 ```bash

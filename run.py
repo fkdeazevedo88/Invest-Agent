@@ -5,6 +5,7 @@
   python run.py run             one decide-and-trade cycle on the PAPER account
   python run.py run --dry-run   decide and show orders, place nothing
   python run.py run --live      one cycle with REAL money on moomoo
+  python run.py accounts        list your moomoo accounts and which one the agent uses
 """
 import argparse
 import datetime as dt
@@ -18,7 +19,7 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from agent import data, strategy
-from agent.brokers import BrokerError, MoomooBroker, PaperBroker, RunLock
+from agent.brokers import BrokerError, MoomooBroker, PaperBroker, RunLock, list_accounts
 
 ROOT = Path(__file__).parent
 STATE = ROOT / "state"
@@ -86,6 +87,8 @@ def cycle(args, cfg):
 
     broker = MoomooBroker(cfg, STATE) if args.live else PaperBroker(cfg, STATE)
     try:
+        if broker.live:
+            print(f"Trading moomoo {broker.acc_type} account {broker.acc_id}")
         cash, pos, value, equity, held = account(broker, prices, cfg)
         show(cash, pos, value, equity, held, cfg)
         if broker.pending():
@@ -159,6 +162,8 @@ def status(args, cfg):
     prices = {u["ticker"]: data.fetch(u["ticker"])["price"] for u in cfg["universe"]}
     broker = MoomooBroker(cfg, STATE) if args.live else PaperBroker(cfg, STATE)
     try:
+        if broker.live:
+            print(f"moomoo {broker.acc_type} account {broker.acc_id}")
         show(*account(broker, prices, cfg), cfg)
     finally:
         broker.close()
@@ -168,12 +173,18 @@ def status(args, cfg):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("command", choices=["run", "status"])
+    p.add_argument("command", choices=["run", "status", "accounts"])
     p.add_argument("--live", action="store_true", help="use the real moomoo account (real money)")
     p.add_argument("--dry-run", action="store_true", help="show the decision and orders without placing them")
     args = p.parse_args()
     cfg = yaml.safe_load((ROOT / "config.yaml").read_text())
     STATE.mkdir(exist_ok=True)
+    if args.command == "accounts":
+        try:
+            print(list_accounts(cfg))
+        except BrokerError as e:
+            sys.exit(f"Stopped: {e}")
+        return
     try:
         with RunLock(STATE / "run.lock"):
             (cycle if args.command == "run" else status)(args, cfg)

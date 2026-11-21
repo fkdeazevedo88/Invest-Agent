@@ -34,5 +34,7 @@ moomoo:
   host: 127.0.0.1
   port: 11111                 # OpenD gateway
   security_firm: FUTUCA       # Moomoo Financial Canada
-  acc_id: 0                   # 0 = first account; set this if you have several
+  account_type: TFSA          # which account the agent trades: TFSA, MARGIN, CASH, RRSP...
+  acc_id: 0                   # 0 = pick the one account of account_type; set it only if you have
+                              # several of that type (see: python run.py accounts)
   fill_wait_seconds: 30       # wait after sells before buying

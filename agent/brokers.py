@@ -2,6 +2,7 @@
 import datetime as dt
 import json
 import os
+import socket
 import time
 import uuid
 from pathlib import Path
@@ -108,6 +109,85 @@ class PaperBroker:
         pass
 
 
+def open_trade_context(m: dict):
+    """Connect to OpenD. moomoo's own client retries forever if OpenD isn't there,
+    so check the port first and fail with a clear message instead."""
+    try:
+        socket.create_connection((m["host"], m["port"]), timeout=5).close()
+    except OSError:
+        raise BrokerError(
+            f"can't reach OpenD at {m['host']}:{m['port']}. Open the OpenD program, log in "
+            "with your moomoo account, and try again."
+        )
+    import moomoo as mm
+
+    return mm.OpenSecTradeContext(
+        filter_trdmarket=mm.TrdMarket.CA, host=m["host"], port=m["port"],
+        security_firm=getattr(mm.SecurityFirm, m["security_firm"]),
+    )
+
+
+def real_accounts(ctx) -> list[dict]:
+    """The real-money accounts OpenD can see, as [{acc_id, acc_type, status}]."""
+    import moomoo as mm
+
+    ret, df = ctx.get_acc_list()
+    if ret != mm.RET_OK:
+        raise BrokerError(f"moomoo get_acc_list failed: {df}")
+    out = []
+    for _, r in df.iterrows():
+        if str(r["trd_env"]) != mm.TrdEnv.REAL:
+            continue
+        status = str(r["acc_status"]) if "acc_status" in df.columns else "ACTIVE"
+        out.append({"acc_id": int(r["acc_id"]), "acc_type": str(r["acc_type"]), "status": status})
+    return out
+
+
+def describe(accounts: list[dict]) -> str:
+    return "\n".join(f"  {a['acc_type']:<8} acc_id {a['acc_id']}  ({a['status']})" for a in accounts) or "  (none)"
+
+
+def choose_account(ctx, m: dict) -> tuple[int, str]:
+    """Pick exactly one account, by type (and acc_id if several share a type).
+    Never falls back to 'the first account'."""
+    want = str(m.get("account_type", "")).upper()
+    acc_id = int(m.get("acc_id") or 0)
+    accounts = [a for a in real_accounts(ctx) if a["status"] != "DISABLED"]
+    if acc_id:
+        match = [a for a in accounts if a["acc_id"] == acc_id]
+        if not match:
+            raise BrokerError(f"acc_id {acc_id} is not one of your active accounts:\n{describe(accounts)}")
+        if want and match[0]["acc_type"] != want:
+            raise BrokerError(
+                f"acc_id {acc_id} is a {match[0]['acc_type']} account, but config.yaml says account_type: {want}. "
+                "Fix one of them so they agree."
+            )
+        return acc_id, match[0]["acc_type"]
+    if not want:
+        raise BrokerError("set moomoo.account_type in config.yaml (for example TFSA)")
+    match = [a for a in accounts if a["acc_type"] == want]
+    if len(match) == 1:
+        return match[0]["acc_id"], want
+    if not match:
+        raise BrokerError(f"no active {want} account found. Your accounts:\n{describe(accounts)}")
+    raise BrokerError(f"you have {len(match)} {want} accounts; set moomoo.acc_id in config.yaml to one of:\n{describe(match)}")
+
+
+def list_accounts(cfg: dict) -> str:
+    """Show the accounts OpenD can see and which one the agent would use (no trading, no password)."""
+    ctx = open_trade_context(cfg["moomoo"])
+    try:
+        text = "Your moomoo accounts:\n" + describe(real_accounts(ctx))
+        try:
+            acc_id, acc_type = choose_account(ctx, m)
+            text += f"\n\nThe agent will use: {acc_type} account {acc_id}"
+        except BrokerError as e:
+            text += f"\n\nThe agent will NOT trade until this is fixed: {e}"
+        return text
+    finally:
+        ctx.close()
+
+
 FINAL_STATUSES = {
     "FILLED_ALL", "CANCELLED_ALL", "CANCELLED_PART", "DELETED", "DISABLED",
     "FAILED", "FILL_CANCELLED", "SUBMIT_FAILED", "TIMEOUT",
@@ -121,6 +201,9 @@ class MoomooBroker:
     Requires OpenD running and logged in on this machine, and the trade
     password in the MOOMOO_TRADE_PASSWORD environment variable.
     moomoo has no paper trading for the Canadian market, so this is REAL money.
+
+    It trades exactly one account, chosen by type (config: moomoo.account_type,
+    TFSA by default); it refuses to start if that is ambiguous.
 
     SAFETY RULE: the agent never sells anything it did not buy.
     It shares the account with your own investments, so it keeps a ledger
@@ -140,7 +223,6 @@ class MoomooBroker:
 
         self.mm = mm
         m = cfg["moomoo"]
-        self.acc_id = m["acc_id"]
         self.wait = m["fill_wait_seconds"]
         self.to_mm = {u["ticker"]: u["moomoo"] for u in cfg["universe"]}
         self.from_mm = {v: k for k, v in self.to_mm.items()}
@@ -152,12 +234,14 @@ class MoomooBroker:
         pwd = os.environ.get("MOOMOO_TRADE_PASSWORD")
         if not pwd:
             raise BrokerError("set MOOMOO_TRADE_PASSWORD to trade live")
-        self.ctx = mm.OpenSecTradeContext(
-            filter_trdmarket=mm.TrdMarket.CA,
-            host=m["host"],
-            port=m["port"],
-            security_firm=getattr(mm.SecurityFirm, m["security_firm"]),
-        )
+        self.ctx = open_trade_context(m)
+        self.acc_id, self.acc_type = choose_account(self.ctx, m)
+        owner = self.ledger.setdefault("acc_id", self.acc_id)
+        if owner != self.acc_id:
+            raise BrokerError(
+                f"the ledger belongs to account {owner}, not {self.acc_id}. The agent's records are per "
+                "account; switching accounts would let it sell shares it never bought there."
+            )
         self._ok(self.ctx.unlock_trade(pwd), "unlock_trade")
         self.reconcile()
 
