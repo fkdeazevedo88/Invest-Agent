@@ -34,8 +34,9 @@ PRICES = {
 class FakeAccount:
     """A moomoo account: cash, holdings and order records."""
 
-    def __init__(self, cash, positions):
-        self.cash = cash
+    def __init__(self, cash, positions, usd=0.0):
+        self.cash = cash                  # CAD
+        self.usd = usd                    # USD
         self.pos = dict(positions)
         self.today, self.history, self.sells = [], [], []
         self.fill = True                  # fill orders immediately?
@@ -76,7 +77,7 @@ class FakeCtx:
         return 0, pd.DataFrame(ACCOUNT.accounts)
 
     def accinfo_query(self, **kw):
-        return 0, pd.DataFrame({"ca_cash": [ACCOUNT.cash]})
+        return 0, pd.DataFrame({"ca_cash": [ACCOUNT.cash], "us_cash": [ACCOUNT.usd]})
 
     def position_list_query(self, **kw):
         return 0, pd.DataFrame({"code": list(ACCOUNT.pos), "qty": list(ACCOUNT.pos.values())})
@@ -87,16 +88,20 @@ class FakeCtx:
         if a.fail_before_send:
             a.fail_before_send = False
             raise ConnectionError("lost connection before the order was sent")
+        usd = code.startswith("US.")
         if trd_side == "SELL":
             if qty > a.pos.get(code, 0):
                 raise AssertionError(f"short sale of {qty} {code}")
             a.sells.append((code, qty))
-        elif qty * price > a.cash + 1e-9:
+        elif qty * price > (a.usd if usd else a.cash) + 1e-9:
             raise AssertionError(f"buying {qty} {code} needs a margin loan")
         a.ids += 1
         filled = qty if a.fill else 0
         sign = 1 if trd_side == "BUY" else -1
-        a.cash -= sign * filled * price
+        if usd:
+            a.usd -= sign * filled * price
+        else:
+            a.cash -= sign * filled * price
         a.pos[code] = a.pos.get(code, 0) + sign * filled
         a.today.append({
             "order_id": str(a.ids), "order_status": "FILLED_ALL" if filled else "SUBMITTED",
@@ -147,6 +152,7 @@ class LiveSafetyTest(unittest.TestCase):
             mock.patch.object(run, "HALT", self.tmp / "HALT"),
             mock.patch.object(run, "market_open", lambda: True),
             mock.patch.object(run.data, "snapshot", lambda tickers, **kw: snap),
+            mock.patch.object(run.data, "fx_rates", lambda currencies: {"CAD": 1.0, "USD": 1.4}),
             mock.patch.object(brokers, "today", lambda: self.day.isoformat()),
             mock.patch.object(brokers.socket, "create_connection", lambda *a, **k: mock.Mock()),
         ]
@@ -160,7 +166,7 @@ class LiveSafetyTest(unittest.TestCase):
         return ACCOUNT
 
     def cycle(self, target, dry_run=False):
-        with mock.patch.object(strategy, "baseline", lambda snap, cfg: target):
+        with mock.patch.object(strategy, "baseline", lambda snap, cfg, **kw: target):
             run.cycle(types.SimpleNamespace(live=True, dry_run=dry_run), self.cfg)
 
     def next_day(self):

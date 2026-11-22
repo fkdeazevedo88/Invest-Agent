@@ -24,18 +24,25 @@ Rules enforced by code after you answer (violations are clipped, so respect them
 from the universe, weights between 0 and the per-position cap (the cash ETF is exempt), and the
 weights must sum to at most 1."""
 
-MOMENTUM_SYSTEM = """You manage a small, deliberately HIGH-RISK, long-only sleeve of Canadian (TSX) stocks for a retail
-investor who chose high risk for a chance at higher returns and accepts large losses. You receive
-momentum candidates that already passed the code's filters (liquid, above $2, in an uptrend, not in
-a sharp recent drop), the current holdings, a rules-based baseline (the strongest momentum names,
-equal weight), your recent decisions, and news research on the candidates. Reply with target weights.
+MOMENTUM_SYSTEM = """You manage a small, deliberately HIGH-RISK, long-only sleeve of TSX (CAD) and NASDAQ (USD) stocks for
+a Canadian retail investor who chose high risk for a chance at higher returns and accepts large
+losses. You receive momentum candidates that already passed the code's filters (liquid, above $2,
+in an uptrend, not in a sharp recent drop, affordable), the current holdings, a rules-based baseline
+(the strongest momentum names, equal weight), your recent decisions, and news research covering
+both the big picture (economy, trade and tariffs, central banks, tensions and politics between
+countries, commodities, CAD/USD) and each candidate. Reply with target weights.
 
 How to think about it:
 - This sleeve rides strong price trends in a few stocks. The baseline is a sound default; deviate
   only for a concrete reason, mainly news: drop a candidate facing a known negative event (fraud
-  allegations, a failed deal, a dilutive financing, a guidance cut, a takeover already priced in).
-- Do not chase stories without price confirmation, and do not invent catalysts. If the research
-  found nothing material, follow the baseline.
+  allegations, a failed deal, a dilutive financing, a guidance cut, a takeover already priced in),
+  or one directly exposed to a specific, reported big-picture threat (for example new tariffs on
+  its sector or its main export market, sanctions, a ban affecting its business).
+- Use only facts from the research that come with a named source. Ignore anything unsourced,
+  speculative or vague. Do not invent catalysts or risks. Markets already price known news, so
+  big-picture worries justify at most a modest step back (fewer positions, more cash), not a
+  bet on a prediction. If the research found nothing material, follow the baseline.
+- NASDAQ stocks are bought only with the investor's US-dollar cash; the code handles that.
 - Few positions, but not one: concentration is the point, a single bet is not.
 - Stay consistent with recent decisions unless prices or news changed; churn costs money.
 - Unallocated weight simply stays in cash. Holding cash when few candidates qualify is correct.
@@ -44,15 +51,47 @@ Rules enforced by code after you answer (violations are dropped or clipped): onl
 candidate list, weights between 0 and the per-position cap, at most the maximum number of
 positions, and weights summing to at most 1."""
 
-RESEARCH_PROMPT = """Search recent news (the last few weeks) for each of these TSX-listed stocks: {names}.
-For each one, report in one or two lines anything material for the next few weeks: earnings or
-guidance, financings or share issuance, mergers or takeovers, legal or regulatory problems,
-commodity moves that drive it, or "nothing material found". Be factual and say when unsure."""
+RESEARCH_PROMPT = """You are gathering news for a stock-trading decision. Search for REAL, recent news (about the last two
+weeks) from established news organizations, official sources and company filings.
+
+Part 1 - the big picture, as it affects Canadian and US stocks:
+- trade between countries: tariffs, trade deals and disputes (especially Canada-US and US-China),
+  sanctions, export controls
+- the economy and central banks: Bank of Canada, US Federal Reserve, interest rates, inflation,
+  jobs, recession signs
+- geopolitics: wars and conflicts, tensions between countries, elections and major policy changes
+- what moves these stocks: oil, natural gas, gold, copper, uranium, chips and AI spending, and the
+  Canadian dollar against the US dollar
+
+Part 2 - each of these stocks: {names}
+Anything material for the next few weeks: earnings or guidance, financings or share issuance,
+mergers or takeovers, legal or regulatory trouble, or how the big-picture news above hits it.
+
+Rules:
+- Report only facts you found in a source during this search, each with the source name, the date
+  and the link.
+- No rumours, opinions presented as facts, social-media posts, or unsourced claims. If you could
+  not confirm something in a reputable source, leave it out.
+- If nothing material turned up for a stock, write "nothing material found".
+- Be brief: one or two lines per item."""
+
+# Web search is limited to these sites so the research uses established news organizations,
+# official statistics and central banks, regulators, and company press releases.
+NEWS_SOURCES = [
+    "reuters.com", "apnews.com", "bloomberg.com", "bnnbloomberg.ca", "cbc.ca", "ctvnews.ca",
+    "globalnews.ca", "theglobeandmail.com", "financialpost.com", "cnbc.com", "wsj.com", "ft.com",
+    "marketwatch.com", "barrons.com", "economist.com", "bbc.com", "nytimes.com", "axios.com",
+    "politico.com", "bankofcanada.ca", "federalreserve.gov", "statcan.gc.ca", "bls.gov", "bea.gov",
+    "canada.ca", "ustr.gov", "whitehouse.gov", "eia.gov", "iea.org", "imf.org", "worldbank.org",
+    "oecd.org", "sec.gov", "sedarplus.ca", "nasdaq.com", "tsx.com", "globenewswire.com",
+    "newswire.ca", "businesswire.com", "prnewswire.com", "mining.com", "kitco.com",
+    "world-nuclear-news.org",
+]
 
 
-def baseline(snap: dict, cfg: dict) -> dict:
+def baseline(snap: dict, cfg: dict, buyable: set | None = None) -> dict:
     if cfg.get("strategy", "etf_trend") == "momentum":
-        return momentum_baseline(snap, cfg)
+        return momentum_baseline(snap, cfg, buyable)
     return etf_baseline(snap, cfg)
 
 
@@ -77,15 +116,19 @@ def momentum_score(s: dict) -> float:
     return 0.5 * s["ret_3m"] + 0.3 * s["ret_6m"] + 0.2 * s["ret_1m"]
 
 
-def momentum_candidates(snap: dict, cfg: dict) -> list[str]:
-    """Stocks that pass every filter, strongest momentum first."""
+def momentum_candidates(snap: dict, cfg: dict, buyable: set | None = None) -> list[str]:
+    """Stocks that pass every filter, strongest momentum first. Prices and traded
+    value are compared in CAD. `buyable`, if given, limits the list to stocks the
+    agent can afford at least one share of."""
     h = cfg["momentum"]
     out = []
     for t, d in snap.items():
         s = d["signals"]
+        if buyable is not None and t not in buyable:
+            continue
         if (
-            d["price"] >= h["min_price"]
-            and d["dollar_volume_20d"] >= h["min_dollar_volume"]
+            d.get("price_cad", d["price"]) >= h["min_price"]
+            and d.get("dollar_volume_cad", d["dollar_volume_20d"]) >= h["min_dollar_volume"]
             and s["above_50d_avg"]
             and s["above_200d_avg"]
             and s["ret_6m"] > 0
@@ -95,12 +138,12 @@ def momentum_candidates(snap: dict, cfg: dict) -> list[str]:
     return sorted(out, key=lambda t: momentum_score(snap[t]["signals"]), reverse=True)
 
 
-def momentum_baseline(snap: dict, cfg: dict) -> dict:
+def momentum_baseline(snap: dict, cfg: dict, buyable: set | None = None) -> dict:
     """Equal weight in the top N candidates; whatever isn't invested stays cash.
     A held stock drops out (and is sold) once it fails a filter, e.g. falls more
     than stop_loss below its 20-day high."""
     n = cfg["momentum"]["max_positions"]
-    picks = momentum_candidates(snap, cfg)[:n]
+    picks = momentum_candidates(snap, cfg, buyable)[:n]
     w = min(1 / n, cfg["risk"]["max_position_weight"])
     return {t: w for t in picks}
 
@@ -126,14 +169,19 @@ def sanitize(weights: dict, cfg: dict, allowed: set | None = None) -> dict:
 
 
 def research_news(tickers: list[str], cfg: dict) -> str:
-    """Ask Claude to search the web for recent news on the candidates.
+    """Ask Claude to search trusted news sites for the big picture (economy, trade,
+    politics between countries) and for recent news on the candidates.
     Returns plain-text notes ("" if nothing usable came back)."""
     import anthropic
 
-    names = ", ".join(t.replace(".TO", "") + " (TSX)" for t in tickers)
+    names = ", ".join(t[:-3] + " (TSX)" if t.endswith(".TO") else t + " (NASDAQ)" for t in tickers)
     client = anthropic.Anthropic()
     messages = [{"role": "user", "content": RESEARCH_PROMPT.format(names=names)}]
-    tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": cfg["claude"].get("max_searches", 8)}]
+    tools = [{
+        "type": "web_search_20260209", "name": "web_search",
+        "max_uses": cfg["claude"].get("max_searches", 15),
+        "allowed_domains": cfg["claude"].get("news_sources", NEWS_SOURCES),
+    }]
     resp = None
     for _ in range(5):  # resume paused server-side search loops, with a limit
         resp = client.messages.create(
@@ -171,7 +219,8 @@ def claude_weights(snap: dict, current: dict, base: dict, history: list, cfg: di
     shown = candidates if momentum else list(snap)
     payload = {
         ("candidates" if momentum else "universe"): {
-            t: {"name": names.get(t, t), "price_cad": snap[t]["price"],
+            t: {"name": names.get(t, t), "currency": snap[t].get("currency", "CAD"),
+                "price": snap[t]["price"], "price_cad": round(snap[t].get("price_cad", snap[t]["price"]), 2),
                 **{k: round(v, 4) if isinstance(v, float) else v for k, v in snap[t]["signals"].items()}}
             for t in shown
         },

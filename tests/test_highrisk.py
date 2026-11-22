@@ -73,10 +73,16 @@ class MomentumRulesTest(unittest.TestCase):
         self.assertFalse(hr & {"ENB.TO", "BN.TO", "BAM.TO"})
         self.assertNotEqual(self.cfg["state_dir"], "state")
         for u in self.cfg["universe"]:
-            self.assertEqual(brokers.moomoo_code(u), "CA." + u["ticker"][:-3])
+            if u["ticker"].endswith(".TO"):
+                self.assertEqual(brokers.moomoo_code(u), "CA." + u["ticker"][:-3])
+            else:
+                self.assertEqual(u.get("market"), "US")
+                self.assertEqual(brokers.moomoo_code(u), "US." + u["ticker"])
+                self.assertEqual(brokers.currency_of(u), "USD")
+        self.assertIn("ON", hr)                              # not read as a yes/no value
 
 
-class HighRiskLiveTest(fake.LiveSafetyTest.__base__):
+class HighRiskBase(unittest.TestCase):
     """Both agents trading the same fake margin account."""
 
     def setUp(self):
@@ -87,6 +93,7 @@ class HighRiskLiveTest(fake.LiveSafetyTest.__base__):
             c["claude"]["enabled"] = False
             c["moomoo"]["fill_wait_seconds"] = 0
             c["moomoo"]["account_type"] = "MARGIN"
+        self.hr_cfg["capital_cad"], self.hr_cfg["capital_usd"] = 500, 0   # CAD-only unless a test says otherwise
         self.snap = {t: {"price": p, "dollar_volume_20d": 5e7, "signals": sig()} for t, p in fake.PRICES.items()}
         for i, t in enumerate(["SHOP.TO", "CCO.TO", "AEM.TO", "IVN.TO", "CVE.TO"]):
             self.snap[t] = stock(price=50.0, r3=0.5 - i / 20)
@@ -94,7 +101,8 @@ class HighRiskLiveTest(fake.LiveSafetyTest.__base__):
             mock.patch.dict(sys.modules, {"moomoo": fake.fake_moomoo}),
             mock.patch.dict(os.environ, {"MOOMOO_TRADE_PASSWORD": "000000"}),
             mock.patch.object(run, "market_open", lambda: True),
-            mock.patch.object(run.data, "snapshot", lambda tickers, **kw: {t: self.snap[t] for t in tickers if t in self.snap}),
+            mock.patch.object(run.data, "snapshot", lambda tickers, **kw: {t: dict(self.snap[t]) for t in tickers if t in self.snap}),
+            mock.patch.object(run.data, "fx_rates", lambda currencies: {"CAD": 1.0, "USD": 1.4}),
             mock.patch.object(brokers, "today", lambda: "2026-11-23"),
             mock.patch.object(brokers.socket, "create_connection", lambda *a, **k: mock.Mock()),
         ]
@@ -110,9 +118,12 @@ class HighRiskLiveTest(fake.LiveSafetyTest.__base__):
             if etf_target is None:
                 run.cycle(args, cfg)
             else:
-                with mock.patch.object(strategy, "baseline", lambda snap, c: etf_target):
+                with mock.patch.object(strategy, "baseline", lambda snap, c, **kw: etf_target):
                     run.cycle(args, cfg)
 
+
+
+class HighRiskLiveTest(HighRiskBase):
     def test_buys_the_top_momentum_stocks_within_its_own_money(self):
         self.run_agent(self.hr_cfg, self.hr_dir)
         bought = {c for c, q in self.acct.pos.items() if c not in ("CA.XIU", "CA.ENB") and q}
@@ -159,6 +170,86 @@ class HighRiskLiveTest(fake.LiveSafetyTest.__base__):
         with self.assertRaises(data.DataError):
             self.run_agent(self.hr_cfg, self.hr_dir)
         self.assertEqual(len(self.acct.today), orders)
+
+
+class CurrencyAndNewsTest(HighRiskBase):
+    """NASDAQ stocks in US dollars, frozen positions, and the news research request."""
+
+    def us_setup(self, real_usd):
+        self.hr_cfg["capital_cad"], self.hr_cfg["capital_usd"] = 300, 150
+        self.acct.usd = real_usd
+        for t in ("SHOP.TO", "CCO.TO", "AEM.TO", "IVN.TO", "CVE.TO"):
+            del self.snap[t]
+        self.snap["NVDA"] = stock(price=40.0, r3=0.9)        # strongest momentum, US$40 a share
+        self.snap["CCO.TO"] = stock(price=50.0, r3=0.5)
+
+    def test_nasdaq_stock_bought_with_real_us_dollars(self):
+        self.us_setup(real_usd=1000.0)
+        self.run_agent(self.hr_cfg, self.hr_dir)
+        self.assertGreater(self.acct.pos.get("US.NVDA", 0), 0)
+        self.assertGreaterEqual(self.acct.usd, 1000.0 - 150.0)   # spent at most its US$150
+        self.assertEqual(self.acct.order_accounts, {111})
+
+    def test_never_borrows_or_converts_for_a_nasdaq_stock(self):
+        self.us_setup(real_usd=0.0)                          # no US dollars in the account
+        self.run_agent(self.hr_cfg, self.hr_dir)             # the fake fails on any borrowing
+        self.assertEqual(self.acct.pos.get("US.NVDA", 0), 0)
+        self.assertGreater(self.acct.pos.get("CA.CCO", 0), 0)   # CAD stocks still bought with CAD
+
+    def test_equity_counts_us_dollars_in_cad(self):
+        self.us_setup(real_usd=1000.0)
+        self.run_agent(self.hr_cfg, self.hr_dir)
+        b = brokers.MoomooBroker(self.hr_cfg, self.hr_dir)
+        prices = {"NVDA": 40.0, "CCO.TO": 50.0}
+        a = run.account(b, prices, {"CAD": 1.0, "USD": 1.4}, self.hr_cfg)
+        expected = (a.cash["CAD"] + a.cash["USD"] * 1.4 + a.pos.get("NVDA", 0) * 40 * 1.4 + a.pos.get("CCO.TO", 0) * 50)
+        self.assertAlmostEqual(a.equity, expected, places=6)
+        self.assertAlmostEqual(run.start_capital(b, {"CAD": 1.0, "USD": 1.4}), 300 + 150 * 1.4)
+
+    def test_frozen_when_moomoo_shows_fewer_shares_than_the_records(self):
+        self.run_agent(self.etf_cfg, self.etf_dir, etf_target={"XIU.TO": 0.4})
+        agent_xiu = self.acct.pos["CA.XIU"] - 10
+        self.acct.pos["CA.XIU"] = agent_xiu - 1              # owner sold 11 by hand
+        sold_before = list(self.acct.sells)
+        self.run_agent(self.etf_cfg, self.etf_dir, etf_target={})   # wants out of XIU
+        self.assertEqual(self.acct.sells, sold_before)       # frozen: not traded
+
+    def test_old_single_currency_records_still_load(self):
+        (self.hr_dir / "paper_account.json").write_text('{"cash": 250.0, "positions": {"CCO.TO": 2}}')
+        self.hr_cfg["capital_usd"] = 150
+        b = brokers.PaperBroker(self.hr_cfg, self.hr_dir)
+        self.assertEqual(b.own_cash(), {"CAD": 250.0, "USD": 150.0})   # US dollars are new money
+        self.assertEqual(b.start(), {"CAD": 500.0, "USD": 150.0})      # started with $500 CAD
+        self.assertEqual(b.positions(), {"CCO.TO": 2})
+
+    def test_changing_capital_later_does_not_change_the_starting_money(self):
+        self.run_agent(self.hr_cfg, self.hr_dir)
+        self.hr_cfg["capital_cad"] = 50                      # edited after the agent started
+        b = brokers.MoomooBroker(self.hr_cfg, self.hr_dir)
+        self.assertEqual(b.start(), {"CAD": 500.0, "USD": 0.0})
+        self.assertAlmostEqual(run.start_capital(b, {"CAD": 1.0, "USD": 1.4}), 500.0)
+        self.assertFalse((self.hr_dir / "HALT").exists())
+
+    def test_news_research_covers_world_news_from_trusted_sources_only(self):
+        calls = []
+
+        class FakeMessages:
+            def create(self, **kw):
+                calls.append(kw)
+                return types.SimpleNamespace(stop_reason="end_turn", content=[types.SimpleNamespace(type="text", text="ok")])
+
+        fake_client = types.SimpleNamespace(messages=FakeMessages())
+        with mock.patch("anthropic.Anthropic", return_value=fake_client):
+            self.assertEqual(strategy.research_news(["SHOP.TO", "NVDA"], self.hr_cfg), "ok")
+        prompt = calls[0]["messages"][0]["content"]
+        for words in ("tariffs", "Bank of Canada", "Federal Reserve", "tensions between countries",
+                      "SHOP (TSX)", "NVDA (NASDAQ)", "source name, the date"):
+            self.assertIn(words, prompt)
+        tool = calls[0]["tools"][0]
+        self.assertEqual(tool["type"], "web_search_20260209")
+        for site in ("reuters.com", "bankofcanada.ca", "federalreserve.gov", "sedarplus.ca", "sec.gov"):
+            self.assertIn(site, tool["allowed_domains"])
+        self.assertFalse(any(s in tool["allowed_domains"] for s in ("reddit.com", "x.com", "twitter.com")))
 
 
 if __name__ == "__main__":

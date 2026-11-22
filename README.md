@@ -136,23 +136,38 @@ CRON_TZ=America/Toronto
 ## High-risk agent (optional)
 
 A second, separate agent for a small amount of money you can afford to lose. It holds up to 4
-individual TSX stocks with the strongest recent price momentum (tech, uranium, gold, copper, oil),
-from the list in `config-highrisk.yaml`.
+individual TSX or NASDAQ stocks with the strongest recent price momentum (tech, AI chips, uranium,
+gold, copper, oil), from the list in `config-highrisk.yaml`.
 
 **How it picks:** every run it scans the list and keeps only stocks that are above $2, trade at
 least $2M a day, are above their 50- and 200-day averages, are up over 6 months, and haven't
-fallen 15% from their 20-day high. It buys the strongest four, about 25% each, and leaves the rest
-in cash. A stock that breaks a rule (for example falls 15% from its recent high) is sold on the
-next run. With an Anthropic API key, Claude also searches recent news on the top candidates and
-can drop one with bad news; it can only choose from the stocks that passed the rules.
+fallen 15% from their 20-day high, and that it can afford at least one share of. It buys the
+strongest four, about 25% each, and leaves the rest in cash. A stock that breaks a rule (for
+example falls 15% from its recent high) is sold on the next run.
 
-**Its own money and records.** It manages `capital_cad` (default $500) with its own ledger in
-`state-highrisk/`, separate from the ETF agent. The same safety rules apply: it never sells
+**News check (optional, needs an Anthropic API key).** Before deciding, Claude searches the web for
+the big picture (trade and tariffs between countries, the Bank of Canada and the US Federal
+Reserve, conflicts, tensions and elections, oil, metals, chips, the Canadian dollar) and for news on
+the top candidates. The search only uses established news organizations, central banks and
+government statistics, regulators and company press releases (the list is `NEWS_SOURCES` in
+`agent/strategy.py`), and every item must come with its source, date and link. Claude can then
+drop a candidate with bad news or hold more cash, but can only choose from stocks that passed the
+rules. Expect roughly C$0.50 to C$1 of API cost per run.
+
+**Two currencies.** TSX stocks are bought with Canadian dollars (`capital_cad`, default $500) and
+NASDAQ stocks with US dollars (`capital_usd`, default US$150). The agent never converts currency
+and never borrows: put the US dollars in the account yourself (moomoo app: currency exchange), or
+set `capital_usd: 0` to skip NASDAQ. Profit and loss are shown in CAD at today's exchange rate.
+With small amounts, expensive shares (for example US$300+) can't be bought; the agent skips them.
+
+**Its own money and records.** It manages its own money, recorded in `state-highrisk/` on its first
+run, separate from the ETF agent. Changing `capital_*` later doesn't change what it was given. The same safety rules apply: it never sells
 anything it didn't buy, never borrows, never short sells, and it never trades your own stocks or
 the ETF agent's funds (`exclude` in the config). Only one agent runs at a time, so they never
-spend the same cash. Its kill switch is at -40%.
+spend the same cash. If moomoo ever shows fewer shares of a stock than its records say it owns, it
+stops trading that stock until you check. Its kill switch is at -40%.
 
-**Past results of these rules, honestly** (Dec 2022 to Nov 2026, weekly, before taxes):
+**Past results of these rules, honestly** (TSX list only, Dec 2022 to Nov 2026, weekly, before taxes):
 
 | | High-risk rules | Just holding XIU |
 |---|---|---|

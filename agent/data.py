@@ -12,7 +12,7 @@ class DataError(RuntimeError):
     pass
 
 
-def fetch(ticker: str) -> dict:
+def fetch(ticker: str, currency: str = "CAD") -> dict:
     """Return {"price": last traded price, "closes": adjusted daily closes,
     "dollar_volume_20d": average daily traded value over the last 20 days}."""
     r = requests.get(URL.format(t=ticker), headers=HEADERS, timeout=30)
@@ -21,8 +21,8 @@ def fetch(ticker: str) -> dict:
     if chart.get("error") or not chart.get("result"):
         raise DataError(f"{ticker}: {chart.get('error')}")
     res = chart["result"][0]
-    if res["meta"].get("currency") != "CAD":
-        raise DataError(f"{ticker}: expected CAD, got {res['meta'].get('currency')}")
+    if res["meta"].get("currency") != currency:
+        raise DataError(f"{ticker}: expected {currency}, got {res['meta'].get('currency')}")
     try:
         closes = [c for c in res["indicators"]["adjclose"][0]["adjclose"] if c]
         quote = res["indicators"]["quote"][0]
@@ -60,14 +60,22 @@ def signals(closes: list[float]) -> dict:
     }
 
 
-def snapshot(tickers: list[str], skip_missing: bool = False) -> dict:
+def fx_rates(currencies) -> dict:
+    """CAD value of one unit of each currency (CAD is 1)."""
+    out = {"CAD": 1.0}
+    if "USD" in set(currencies):
+        out["USD"] = fetch("CAD=X")["price"]  # Yahoo's USD/CAD rate, priced in CAD
+    return out
+
+
+def snapshot(tickers: list[str], skip_missing: bool = False, currencies: dict | None = None) -> dict:
     """{ticker: {"price", "dollar_volume_20d", "signals"}} for the universe.
     With skip_missing, tickers whose data can't be loaded are left out (with a
     warning) instead of stopping the run."""
     out = {}
     for t in tickers:
         try:
-            d = fetch(t)
+            d = fetch(t, (currencies or {}).get(t, "CAD"))
         except (DataError, requests.RequestException) as e:
             if not skip_missing:
                 raise DataError(str(e)) from e

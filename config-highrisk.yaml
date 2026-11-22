@@ -1,16 +1,21 @@
 # ---- HIGH-RISK stock agent ----
-# A few individual TSX stocks with the strongest recent momentum. Expect big swings:
+# A few individual TSX and NASDAQ stocks with the strongest recent momentum. Expect big swings:
 # losing 30-50% of this money is possible. Only use money you can afford to lose.
 name: HIGH-RISK agent
 state_dir: state-highrisk     # its own records, separate from the ETF agent
 strategy: momentum
 
-capital_cad: 500              # the money this agent manages (separate from the ETF agent's)
-max_equity_cad: 1000          # never manages more than this
+capital_cad: 500              # Canadian dollars this agent manages (for TSX stocks)
+capital_usd: 150              # US dollars it manages (for NASDAQ stocks). It never converts currency
+                              # or borrows: put this many US dollars in the account yourself
+                              # (moomoo app: currency exchange), or set 0 to skip NASDAQ.
+                              # Both are read once, when the agent first starts; after that its own
+                              # records (state-highrisk/) are what count.
+max_equity_cad: 1000          # never manages more than this (US dollars counted in CAD)
 
 momentum:
   max_positions: 4            # hold at most 4 stocks (about 25% each)
-  min_price: 2.0              # no penny stocks
+  min_price: 2.0              # no penny stocks (in CAD)
   min_dollar_volume: 2000000  # at least $2M CAD traded per day, so orders fill near the price
   stop_loss: 0.15             # sell a stock that falls 15% below its 20-day high
   research_top: 8             # how many candidates Claude researches in the news
@@ -24,8 +29,9 @@ risk:
 
 claude:
   enabled: true               # needs ANTHROPIC_API_KEY; otherwise the rules decide alone
-  web_search: true            # Claude checks recent news on the candidates
-  max_searches: 8
+  web_search: true            # Claude checks world news (economy, trade, politics between countries)
+                              # and news on the candidates, on trusted news sites only
+  max_searches: 15
   model: claude-opus-5-5
   effort: high
 
@@ -43,7 +49,8 @@ moomoo:
 # Never traded by this agent: your own stocks and the ETF agent's funds.
 exclude: [ENB.TO, BN.TO, BAM.TO, BEP-UN.TO, BIP-UN.TO, VFV.TO, ZQQ.TO, XIU.TO, XEF.TO, XEC.TO, ZAG.TO, CGL-C.TO, CASH.TO]
 
-# Liquid, volatile TSX stocks (CAD). moomoo symbols are CA.<symbol>.
+# Liquid, volatile stocks. TSX ones trade in CAD (moomoo CA.<symbol>); entries with
+# market: US are NASDAQ stocks in USD (moomoo US.<symbol>).
 universe:
   - {ticker: SHOP.TO, name: Shopify (e-commerce software)}
   - {ticker: LSPD.TO, name: Lightspeed (payments software)}
@@ -88,3 +95,43 @@ universe:
   - {ticker: ACB.TO,  name: Aurora Cannabis}
   - {ticker: ATZ.TO,  name: Aritzia (clothing)}
   - {ticker: GOOS.TO, name: Canada Goose (clothing)}
+  # NASDAQ (US dollars)
+  - {ticker: "NVDA", market: US, name: Nvidia (AI chips)}
+  - {ticker: "AMD", market: US, name: AMD (chips)}
+  - {ticker: "TSLA", market: US, name: Tesla (electric cars)}
+  - {ticker: "PLTR", market: US, name: Palantir (AI software)}
+  - {ticker: "META", market: US, name: Meta (Facebook, Instagram)}
+  - {ticker: "AMZN", market: US, name: Amazon}
+  - {ticker: "NFLX", market: US, name: Netflix}
+  - {ticker: "AVGO", market: US, name: Broadcom (chips)}
+  - {ticker: "MU", market: US, name: Micron (memory chips)}
+  - {ticker: "SMCI", market: US, name: Super Micro (AI servers)}
+  - {ticker: "COIN", market: US, name: Coinbase (crypto exchange)}
+  - {ticker: "MSTR", market: US, name: Strategy (bitcoin holder)}
+  - {ticker: "HOOD", market: US, name: Robinhood (trading app)}
+  - {ticker: "CRWD", market: US, name: CrowdStrike (security)}
+  - {ticker: "DDOG", market: US, name: Datadog (cloud software)}
+  - {ticker: "ARM", market: US, name: Arm (chip designs)}
+  - {ticker: "MRVL", market: US, name: Marvell (chips)}
+  - {ticker: "APP", market: US, name: AppLovin (ad software)}
+  - {ticker: "RKLB", market: US, name: Rocket Lab (space)}
+  - {ticker: "IONQ", market: US, name: IonQ (quantum computing)}
+  - {ticker: "SOFI", market: US, name: SoFi (online bank)}
+  - {ticker: "AFRM", market: US, name: Affirm (buy now pay later)}
+  - {ticker: "MDB", market: US, name: MongoDB (databases)}
+  - {ticker: "ZS", market: US, name: Zscaler (security)}
+  - {ticker: "PANW", market: US, name: Palo Alto Networks (security)}
+  - {ticker: "TTD", market: US, name: The Trade Desk (ads)}
+  - {ticker: "ASML", market: US, name: ASML (chip machines)}
+  - {ticker: "LULU", market: US, name: Lululemon (clothing)}
+  - {ticker: "INTC", market: US, name: Intel (chips)}
+  - {ticker: "GOOGL", market: US, name: Alphabet (Google)}
+  - {ticker: "AAPL", market: US, name: Apple}
+  - {ticker: "MSFT", market: US, name: Microsoft}
+  - {ticker: "QCOM", market: US, name: Qualcomm (chips)}
+  - {ticker: "ON", market: US, name: ON Semiconductor}
+  - {ticker: "LRCX", market: US, name: Lam Research (chip machines)}
+  - {ticker: "AMAT", market: US, name: Applied Materials (chip machines)}
+  - {ticker: "ABNB", market: US, name: Airbnb}
+  - {ticker: "DASH", market: US, name: DoorDash}
+  - {ticker: "UPST", market: US, name: Upstart (AI lending)}
