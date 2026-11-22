@@ -138,7 +138,7 @@ class LiveSafetyTest(unittest.TestCase):
         self.cfg["moomoo"]["fill_wait_seconds"] = 0
         self.cfg["moomoo"]["account_type"] = "TFSA"   # most tests use the TFSA (222); margin tests switch
         self.day = dt.date(2026, 11, 23)
-        snap = {t: {"price": p, "signals": {}} for t, p in PRICES.items()}
+        snap = {t: {"price": p, "dollar_volume_20d": 5e7, "signals": {}} for t, p in PRICES.items()}
         patches = [
             mock.patch.dict(sys.modules, {"moomoo": fake_moomoo}),
             mock.patch.dict(os.environ, {"MOOMOO_TRADE_PASSWORD": "000000"}),
@@ -146,7 +146,7 @@ class LiveSafetyTest(unittest.TestCase):
             mock.patch.object(run, "JOURNAL", self.tmp / "journal.jsonl"),
             mock.patch.object(run, "HALT", self.tmp / "HALT"),
             mock.patch.object(run, "market_open", lambda: True),
-            mock.patch.object(run.data, "snapshot", lambda tickers: snap),
+            mock.patch.object(run.data, "snapshot", lambda tickers, **kw: snap),
             mock.patch.object(brokers, "today", lambda: self.day.isoformat()),
             mock.patch.object(brokers.socket, "create_connection", lambda *a, **k: mock.Mock()),
         ]

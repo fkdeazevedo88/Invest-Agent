@@ -13,6 +13,16 @@ class BrokerError(RuntimeError):
     pass
 
 
+def moomoo_code(u: dict) -> str:
+    """moomoo's symbol for a universe entry: given explicitly, or CA.<symbol> for a .TO ticker."""
+    if u.get("moomoo"):
+        return u["moomoo"]
+    t = u["ticker"]
+    if not t.endswith(".TO") or "-" in t:
+        raise BrokerError(f"{t}: give its moomoo symbol explicitly in the config")
+    return "CA." + t[:-3]
+
+
 def today() -> str:
     """Trading date on the TSX (Toronto time), YYYY-MM-DD."""
     return dt.datetime.now(ZoneInfo("America/Toronto")).strftime("%Y-%m-%d")
@@ -228,7 +238,7 @@ class MoomooBroker:
         self.mm = mm
         m = cfg["moomoo"]
         self.wait = m["fill_wait_seconds"]
-        self.to_mm = {u["ticker"]: u["moomoo"] for u in cfg["universe"]}
+        self.to_mm = {u["ticker"]: moomoo_code(u) for u in cfg["universe"]}
         self.from_mm = {v: k for k, v in self.to_mm.items()}
         self.path = state_dir / "live_ledger.json"
         if self.path.exists():

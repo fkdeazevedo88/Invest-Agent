@@ -6,6 +6,9 @@
   python run.py run --dry-run   decide and show orders, place nothing
   python run.py run --live      one cycle with REAL money on moomoo
   python run.py accounts        list your moomoo accounts and which one the agent uses
+
+Add --config config-highrisk.yaml to any command to use the HIGH-RISK stock agent
+instead of the ETF agent. Each agent has its own money, records and state folder.
 """
 import argparse
 import datetime as dt
@@ -43,6 +46,9 @@ def account(broker, prices, cfg):
     """The agent's own money, from its records: its cash, its shares, and what's held
     by open orders. `spendable` is the cash it can use right now (never borrowed)."""
     cash, pos, spendable = broker.own_cash(), broker.positions(), broker.cash()
+    missing = [t for t in pos if t not in prices]
+    if missing:
+        raise data.DataError(f"no price for {', '.join(missing)}, which the agent holds; not trading blind")
     value = {t: q * prices[t] for t, q in pos.items()}
     held = broker.reserved()
     equity = cash + sum(value.values()) + held
@@ -87,7 +93,8 @@ def cycle(args, cfg):
         sys.exit("TSX is closed (or within 5 min of open/close). Live orders only go out during market hours.")
 
     tickers = [u["ticker"] for u in cfg["universe"]]
-    snap = data.snapshot(tickers)
+    momentum = cfg.get("strategy") == "momentum"
+    snap = data.snapshot(tickers, skip_missing=momentum)
     prices = {t: d["price"] for t, d in snap.items()}
 
     broker = MoomooBroker(cfg, STATE) if args.live else PaperBroker(cfg, STATE)
@@ -109,16 +116,25 @@ def cycle(args, cfg):
             if not args.dry_run:
                 HALT.write_text(f"{log['time']}: {rationale}\n")
         else:
-            base = strategy.sanitize(strategy.baseline(snap, cfg), cfg)
-            source, rationale, target = "rules", "trend filter + inverse-volatility baseline", base
-            if cfg["claude"]["enabled"] and os.environ.get("ANTHROPIC_API_KEY"):
-                import anthropic
-
+            candidates = strategy.momentum_candidates(snap, cfg) if momentum else None
+            allowed = set(candidates) if momentum else None
+            base = strategy.sanitize(strategy.baseline(snap, cfg), cfg, allowed)
+            if momentum:
+                rationale = (f"strongest momentum among {len(candidates)} stocks passing the filters"
+                             if candidates else "no stock passes the filters; staying in cash")
+            else:
+                rationale = "trend filter + inverse-volatility baseline"
+            source, target = "rules", base
+            if cfg["claude"]["enabled"] and os.environ.get("ANTHROPIC_API_KEY") and (candidates or not momentum):
                 try:
+                    research = ""
+                    if momentum and cfg["claude"].get("web_search"):
+                        print("\nClaude is searching the news on the candidates...")
+                        research = strategy.research_news(candidates[: cfg["momentum"]["research_top"]], cfg)
                     current = {t: v / equity for t, v in value.items()}
-                    raw, why = strategy.claude_weights(snap, current, base, recent_decisions(), cfg)
-                    target, source, rationale = strategy.sanitize(raw, cfg), "claude", why
-                except (anthropic.APIError, ValueError) as e:
+                    raw, why = strategy.claude_weights(snap, current, base, recent_decisions(), cfg, candidates, research)
+                    target, source, rationale = strategy.sanitize(raw, cfg, allowed), "claude", why
+                except Exception as e:  # Claude is optional: any failure falls back to the rules
                     print(f"\nClaude unavailable ({type(e).__name__}: {e}); using rules baseline.")
 
         print(f"\nDecision by: {source}\n{rationale}\n\nTarget:")
@@ -164,9 +180,10 @@ def cycle(args, cfg):
 
 def status(args, cfg):
     STATE.mkdir(exist_ok=True)
-    prices = {u["ticker"]: data.fetch(u["ticker"])["price"] for u in cfg["universe"]}
     broker = MoomooBroker(cfg, STATE) if args.live else PaperBroker(cfg, STATE)
     try:
+        held = set(broker.positions()) | {o["ticker"] for o in broker.pending()}
+        prices = {t: data.fetch(t)["price"] for t in sorted(held)}
         if broker.live:
             print(f"moomoo {broker.acc_type} account {broker.acc_id}")
         show(*account(broker, prices, cfg), cfg)
@@ -176,13 +193,25 @@ def status(args, cfg):
         print(f"\nHALTED: {HALT.read_text().strip()}")
 
 
+def load_config(path: Path) -> dict:
+    cfg = yaml.safe_load(path.read_text())
+    exclude = {e.upper() for e in cfg.get("exclude", [])}
+    cfg["universe"] = [u for u in cfg["universe"] if u["ticker"].upper() not in exclude]
+    return cfg
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("command", choices=["run", "status", "accounts"])
     p.add_argument("--live", action="store_true", help="use the real moomoo account (real money)")
     p.add_argument("--dry-run", action="store_true", help="show the decision and orders without placing them")
+    p.add_argument("--config", default="config.yaml", help="config file (config-highrisk.yaml for the high-risk agent)")
     args = p.parse_args()
-    cfg = yaml.safe_load((ROOT / "config.yaml").read_text())
+    cfg = load_config(ROOT / args.config)
+    global STATE, JOURNAL, HALT
+    STATE = ROOT / cfg.get("state_dir", "state")
+    JOURNAL, HALT = STATE / "journal.jsonl", STATE / "HALT"
+    print(f"[{cfg.get('name', 'ETF agent')}]")
     STATE.mkdir(exist_ok=True)
     if args.command == "accounts":
         try:
@@ -191,7 +220,8 @@ def main():
             sys.exit(f"Stopped: {e}")
         return
     try:
-        with RunLock(STATE / "run.lock"):
+        # One lock for ALL agents: two agents running at once could spend the same cash.
+        with RunLock(ROOT / "run.lock"):
             (cycle if args.command == "run" else status)(args, cfg)
     except (BrokerError, data.DataError) as e:
         sys.exit(f"Stopped, nothing further done: {e}")

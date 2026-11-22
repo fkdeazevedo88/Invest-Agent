@@ -132,3 +132,48 @@ CRON_TZ=America/Toronto
   order is still waiting, the agent won't trade again; unfilled orders expire at market close and the
   next run picks up whatever is left.
 - To stop everything: don't run it, or create a file named `state/HALT`.
+
+## High-risk agent (optional)
+
+A second, separate agent for a small amount of money you can afford to lose. It holds up to 4
+individual TSX stocks with the strongest recent price momentum (tech, uranium, gold, copper, oil),
+from the list in `config-highrisk.yaml`.
+
+**How it picks:** every run it scans the list and keeps only stocks that are above $2, trade at
+least $2M a day, are above their 50- and 200-day averages, are up over 6 months, and haven't
+fallen 15% from their 20-day high. It buys the strongest four, about 25% each, and leaves the rest
+in cash. A stock that breaks a rule (for example falls 15% from its recent high) is sold on the
+next run. With an Anthropic API key, Claude also searches recent news on the top candidates and
+can drop one with bad news; it can only choose from the stocks that passed the rules.
+
+**Its own money and records.** It manages `capital_cad` (default $500) with its own ledger in
+`state-highrisk/`, separate from the ETF agent. The same safety rules apply: it never sells
+anything it didn't buy, never borrows, never short sells, and it never trades your own stocks or
+the ETF agent's funds (`exclude` in the config). Only one agent runs at a time, so they never
+spend the same cash. Its kill switch is at -40%.
+
+**Past results of these rules, honestly** (Dec 2022 to Nov 2026, weekly, before taxes):
+
+| | High-risk rules | Just holding XIU |
+|---|---|---|
+| Total | +44% (+10%/yr) | +94% (+19%/yr) |
+| Worst drop from a peak | -39% | much smaller |
+| Best / worst week | +17% / -18% | |
+
+Over this period it made **less** than simply holding the Canadian market, with much bigger swings.
+These results are also flattered: the stock list was chosen today, from companies that survived.
+High risk does not mean high reward; it means a wider range of outcomes, good and bad.
+
+Run it on pretend money first:
+
+```bash
+.venv/bin/python run.py run --config config-highrisk.yaml
+```
+
+```bash
+.venv/bin/python run.py status --config config-highrisk.yaml
+```
+
+Live (real money), exactly like the ETF agent, with `--config config-highrisk.yaml` added. For its
+stop-loss to react faster, run it every weekday instead of weekly. Keep enough CAD cash in the
+account for both agents (`capital_cad` of each), or the second one will buy less.

@@ -1,0 +1,90 @@
+# ---- HIGH-RISK stock agent ----
+# A few individual TSX stocks with the strongest recent momentum. Expect big swings:
+# losing 30-50% of this money is possible. Only use money you can afford to lose.
+name: HIGH-RISK agent
+state_dir: state-highrisk     # its own records, separate from the ETF agent
+strategy: momentum
+
+capital_cad: 500              # the money this agent manages (separate from the ETF agent's)
+max_equity_cad: 1000          # never manages more than this
+
+momentum:
+  max_positions: 4            # hold at most 4 stocks (about 25% each)
+  min_price: 2.0              # no penny stocks
+  min_dollar_volume: 2000000  # at least $2M CAD traded per day, so orders fill near the price
+  stop_loss: 0.15             # sell a stock that falls 15% below its 20-day high
+  research_top: 8             # how many candidates Claude researches in the news
+
+risk:
+  max_position_weight: 0.30   # no single stock above 30%
+  min_trade_cad: 25
+  no_trade_band: 0.05         # ignore drifts smaller than 5%
+  limit_slippage: 0.005       # limit orders 0.5% through the last price
+  max_drawdown: 0.40          # kill switch: down 40% from capital_cad -> sell all, halt
+
+claude:
+  enabled: true               # needs ANTHROPIC_API_KEY; otherwise the rules decide alone
+  web_search: true            # Claude checks recent news on the candidates
+  max_searches: 8
+  model: claude-opus-5-5
+  effort: high
+
+paper:
+  commission_cad: 0.0
+
+moomoo:
+  host: 127.0.0.1
+  port: 11111
+  security_firm: FUTUCA
+  account_type: MARGIN        # never borrows: buys only with real cash, never short sells
+  acc_id: 0
+  fill_wait_seconds: 30
+
+# Never traded by this agent: your own stocks and the ETF agent's funds.
+exclude: [ENB.TO, BN.TO, BAM.TO, BEP-UN.TO, BIP-UN.TO, VFV.TO, ZQQ.TO, XIU.TO, XEF.TO, XEC.TO, ZAG.TO, CGL-C.TO, CASH.TO]
+
+# Liquid, volatile TSX stocks (CAD). moomoo symbols are CA.<symbol>.
+universe:
+  - {ticker: SHOP.TO, name: Shopify (e-commerce software)}
+  - {ticker: LSPD.TO, name: Lightspeed (payments software)}
+  - {ticker: DCBO.TO, name: Docebo (learning software)}
+  - {ticker: CLS.TO,  name: Celestica (electronics, AI hardware)}
+  - {ticker: BB.TO,   name: BlackBerry (security software)}
+  - {ticker: KXS.TO,  name: Kinaxis (supply-chain software)}
+  - {ticker: HUT.TO,  name: Hut 8 (bitcoin mining, AI data centres)}
+  - {ticker: CCO.TO,  name: Cameco (uranium)}
+  - {ticker: NXE.TO,  name: NexGen Energy (uranium)}
+  - {ticker: DML.TO,  name: Denison Mines (uranium)}
+  - {ticker: EFR.TO,  name: Energy Fuels (uranium, rare earths)}
+  - {ticker: K.TO,    name: Kinross Gold}
+  - {ticker: AEM.TO,  name: Agnico Eagle (gold)}
+  - {ticker: ABX.TO,  name: Barrick (gold, copper)}
+  - {ticker: EQX.TO,  name: Equinox Gold}
+  - {ticker: IMG.TO,  name: IAMGOLD}
+  - {ticker: BTO.TO,  name: B2Gold}
+  - {ticker: ELD.TO,  name: Eldorado Gold}
+  - {ticker: OGC.TO,  name: OceanaGold}
+  - {ticker: DPM.TO,  name: Dundee Precious Metals (gold)}
+  - {ticker: WPM.TO,  name: Wheaton Precious Metals (streaming)}
+  - {ticker: PAAS.TO, name: Pan American Silver}
+  - {ticker: FVI.TO,  name: Fortuna Mining (gold, silver)}
+  - {ticker: EDV.TO,  name: Endeavour Mining (gold)}
+  - {ticker: SSRM.TO, name: SSR Mining (gold)}
+  - {ticker: AYA.TO,  name: Aya Gold & Silver}
+  - {ticker: FM.TO,   name: First Quantum (copper)}
+  - {ticker: IVN.TO,  name: Ivanhoe Mines (copper)}
+  - {ticker: LUN.TO,  name: Lundin Mining (copper)}
+  - {ticker: CS.TO,   name: Capstone Copper}
+  - {ticker: HBM.TO,  name: Hudbay Minerals (copper)}
+  - {ticker: ERO.TO,  name: Ero Copper}
+  - {ticker: TKO.TO,  name: Taseko Mines (copper)}
+  - {ticker: CVE.TO,  name: Cenovus (oil)}
+  - {ticker: BTE.TO,  name: Baytex (oil)}
+  - {ticker: WCP.TO,  name: Whitecap (oil and gas)}
+  - {ticker: ATH.TO,  name: Athabasca Oil}
+  - {ticker: TVE.TO,  name: Tamarack Valley (oil)}
+  - {ticker: KEL.TO,  name: Kelt Exploration (natural gas)}
+  - {ticker: TOU.TO,  name: Tourmaline (natural gas)}
+  - {ticker: ACB.TO,  name: Aurora Cannabis}
+  - {ticker: ATZ.TO,  name: Aritzia (clothing)}
+  - {ticker: GOOS.TO, name: Canada Goose (clothing)}

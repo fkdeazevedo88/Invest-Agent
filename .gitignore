@@ -1,4 +1,6 @@
 .venv/
 state/
+state-*/
+run.lock
 __pycache__/
 *.tmp
