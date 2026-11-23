@@ -94,6 +94,7 @@ class HighRiskBase(unittest.TestCase):
             c["moomoo"]["fill_wait_seconds"] = 0
             c["moomoo"]["account_type"] = "MARGIN"
         self.hr_cfg["capital_cad"], self.hr_cfg["capital_usd"] = 500, 0   # CAD-only unless a test says otherwise
+        self.hr_cfg["strategy"] = "momentum"                               # these tests exercise momentum's picks
         self.snap = {t: {"price": p, "dollar_volume_20d": 5e7, "signals": sig()} for t, p in fake.PRICES.items()}
         for i, t in enumerate(["SHOP.TO", "CCO.TO", "AEM.TO", "IVN.TO", "CVE.TO"]):
             self.snap[t] = stock(price=50.0, r3=0.5 - i / 20)

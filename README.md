@@ -142,9 +142,9 @@ strategies (`strategy:` in the config):
 
 | Strategy | Idea |
 |---|---|
-| `momentum` (default) | Hold the 4 strongest recent winners that are still trending up; sell one that falls 15% from its 20-day high. |
+| `momentum` | Hold the 4 strongest recent winners that are still trending up; sell one that falls 15% from its 20-day high. |
 | `breakout` | Buy stocks hitting new 52-week highs; keep them while they stay within 12% of the high. |
-| `pullback` | Buy the dip in strong stocks: up 10%+ over 6 months but recently down 7-20% and oversold (RSI under 40); sell when they bounce back near the high, or if the drop goes past 20%. |
+| `pullback` (default) | Buy the dip in strong stocks: up 10%+ over 6 months but recently down 7-20% and oversold (RSI under 40); sell when they bounce back near the high, or if the drop goes past 20%. |
 | `sector_rotation` | Find the 2 hottest sectors (gold, uranium, chips, software...) and hold the 2 strongest stocks in each. |
 | `leveraged_trend` | Hold QQU (2x NASDAQ-100, CAD) and TQQQ (3x, USD) only while they're in an uptrend; otherwise cash. |
 | `combo` | Split the money evenly across several strategies (default: momentum + pullback). |

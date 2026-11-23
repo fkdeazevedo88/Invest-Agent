@@ -3,7 +3,7 @@
 # losing 30-50% of this money is possible. Only use money you can afford to lose.
 name: HIGH-RISK agent
 state_dir: state-highrisk     # its own records, separate from the ETF agent
-strategy: momentum            # momentum, breakout, pullback, sector_rotation, leveraged_trend, or combo
+strategy: pullback            # momentum, breakout, pullback, sector_rotation, leveraged_trend, or combo
                               # (compare them first: python run.py backtest --config config-highrisk.yaml --strategy all)
 
 capital_cad: 500              # Canadian dollars this agent manages (for TSX stocks)
