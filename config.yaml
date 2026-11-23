@@ -41,7 +41,10 @@ risk:
   min_trade_cad: 25           # ignore tiny trades
   no_trade_band: 0.03         # ignore drifts smaller than 3% of the portfolio
   limit_slippage: 0.003       # limit orders priced 0.3% through the last price
-  max_drawdown: 0.20          # kill switch: down 20% from capital_cad -> sell all, halt
+  max_drawdown: 0.25          # kill switch: down 25% from the starting money -> sell all, halt
+  trend_buffer: 0.05          # keep an ETF it owns until it's 5% below its 200-day average
+                              # (0 = sell as soon as it dips below; 5% traded 3x less and did
+                              # slightly better in the Nov 2026 backtest, with a bit more risk)
 
 claude:
   enabled: true               # needs ANTHROPIC_API_KEY; otherwise the rules strategy is used

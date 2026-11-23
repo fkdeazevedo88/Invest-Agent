@@ -6,10 +6,13 @@ decides target weights, and places whole-share limit orders. By default it trade
 
 ## How it decides
 
-1. **Kill switch (always runs first, plain code).** If the account falls below 80% of the starting
+1. **Kill switch (always runs first, plain code).** If the account falls below 75% of the starting
    $1,000, it sells everything and refuses to run again until you delete `state/HALT`.
-2. **Rules baseline.** It holds ETFs that are above their 200-day average and have positive 3/6/12-month
+2. **Rules baseline.** It buys ETFs that are above their 200-day average and have positive 3/6/12-month
    momentum, weighted by inverse volatility. The rest goes to `CASH.TO` (a high-interest savings ETF).
+   It keeps an ETF it owns until it falls 5% below its 200-day average (`trend_buffer`), so small dips
+   don't trigger a sale. In the Nov 2026 backtest this traded 3x less (about 3 times a year instead of
+   9) and did slightly better (+69% vs +67%), with a slightly bigger worst drop (-8% vs -7%).
 3. **Claude (optional).** If `ANTHROPIC_API_KEY` is set, Claude sees the signals, your holdings, the
    baseline and its own last 3 decisions, then proposes weights with a written rationale. If Claude
    fails, the agent uses the baseline.
@@ -221,6 +224,10 @@ have soared (Palantir, AppLovin, Strategy, Rocket Lab...). On the TSX list alone
 did worse than or the same as simply holding the market, and momentum lost about half its money.
 `pullback` is the only one that made money in both halves. High risk does not mean high reward;
 it means a wider range of outcomes, good and bad.
+
+Loosening pullback's stop (selling only past a 25% or 30% dip instead of 20%) made every result worse
+in the same backtest (for example total +1072% -> +588%, worst drop -33% -> -47%, last two years
++42% -> +8%), so the high-risk agent keeps the 20% limit.
 
 Run it on pretend money first:
 

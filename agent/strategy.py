@@ -145,7 +145,7 @@ def describe(cfg: dict) -> str:
 def baseline(snap: dict, cfg: dict, buyable: set | None = None, held: set | None = None) -> dict:
     name = cfg.get("strategy", "etf_trend")
     if name == "etf_trend":
-        return etf_baseline(snap, cfg)
+        return etf_baseline(snap, cfg, held or set())
     if name == "combo":
         parts = params(cfg, "combo")["parts"]
         out = {}
@@ -190,16 +190,23 @@ def candidates(snap: dict, cfg: dict, buyable: set | None = None, held: set | No
     return fn(snap, cfg, buyable, held or set())
 
 
-def etf_baseline(snap: dict, cfg: dict) -> dict:
+def etf_baseline(snap: dict, cfg: dict, held: set = frozenset()) -> dict:
     """Hold assets in an uptrend with positive momentum, weighted by inverse
-    volatility and capped; everything else sits in the cash ETF."""
+    volatility and capped; everything else sits in the cash ETF. An ETF already
+    held is kept until it falls more than risk.trend_buffer below its 200-day
+    average (0 = sell as soon as it drops below)."""
     cash_t = cfg["cash_ticker"]
     cap = cfg["risk"]["max_position_weight"]
+    buffer = cfg["risk"].get("trend_buffer", 0.0)
     picks = {}
     for t, d in snap.items():
         s = d["signals"]
         momentum = (s["ret_3m"] + s["ret_6m"] + s["ret_12m"]) / 3
-        if t != cash_t and s["above_200d_avg"] and momentum > 0:
+        if t == cash_t:
+            continue
+        new_buy = s["above_200d_avg"] and momentum > 0
+        keep = t in held and buffer > 0 and s.get("vs_200d_avg", -1) >= -buffer
+        if new_buy or keep:
             picks[t] = 1 / max(s["vol_60d_annual"], 0.03)
     total = sum(picks.values())
     weights = {t: min(v / total, cap) for t, v in picks.items()} if total else {}

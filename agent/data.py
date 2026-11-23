@@ -58,6 +58,7 @@ def signals(closes: list[float]) -> dict:
         "ret_12m": ret(252),
         "above_50d_avg": last > statistics.fmean(closes[-50:]),
         "above_200d_avg": last > statistics.fmean(closes[-200:]),
+        "vs_200d_avg": last / statistics.fmean(closes[-200:]) - 1,      # e.g. -0.03 = 3% below its trend line
         "vol_60d_annual": statistics.stdev(daily) * math.sqrt(252),
         "drawdown_from_20d_high": last / max(closes[-20:]) - 1,
         "drawdown_from_1y_high": last / max(closes[-252:]) - 1,

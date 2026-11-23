@@ -102,6 +102,30 @@ class StrategyRulesTest(unittest.TestCase):
         self.assertEqual(set(backtest.ALL) | set(backtest.ETF_ALL), set(strategy.STRATEGIES))
 
 
+class TrendBufferTest(unittest.TestCase):
+    """ETF agent: an ETF it owns isn't sold until it's trend_buffer below its 200-day average."""
+
+    def setUp(self):
+        self.cfg = run.load_config(ROOT / "config.yaml")
+
+    def etf(self, vs200, momentum=0.1):
+        s = sig(r3=momentum, r6=momentum, above200=vs200 > 0)
+        s["ret_12m"] = momentum
+        s["vs_200d_avg"] = vs200
+        return {"price": 20.0, "dollar_volume_20d": 1e7, "signals": s}
+
+    def test_buffer(self):
+        self.assertEqual(self.cfg["risk"]["trend_buffer"], 0.05)
+        snap = {"XGD.TO": self.etf(-0.03), "CASH.TO": self.etf(0.0, 0.01)}
+        self.assertNotIn("XGD.TO", strategy.baseline(snap, self.cfg))                 # not owned: no new buy
+        self.assertIn("XGD.TO", strategy.baseline(snap, self.cfg, held={"XGD.TO"}))   # owned, 3% under: keep
+        snap["XGD.TO"] = self.etf(-0.07)
+        self.assertNotIn("XGD.TO", strategy.baseline(snap, self.cfg, held={"XGD.TO"}))  # 7% under: sell
+        no_buffer = {**self.cfg, "risk": {**self.cfg["risk"], "trend_buffer": 0.0}}
+        snap["XGD.TO"] = self.etf(-0.01)
+        self.assertNotIn("XGD.TO", strategy.baseline(snap, no_buffer, held={"XGD.TO"}))  # old rule
+
+
 class EtfPullbackTest(unittest.TestCase):
     """The ETF agent with the pullback strategy, using its ETF-sized dips."""
 
