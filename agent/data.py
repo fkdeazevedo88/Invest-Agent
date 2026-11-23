@@ -74,14 +74,39 @@ def fx_rates(currencies) -> dict:
     return out
 
 
-def snapshot(tickers: list[str], skip_missing: bool = False, currencies: dict | None = None) -> dict:
+def quote(ticker: str, currency: str = "CAD", max_age_days: float = 4) -> float:
+    """Latest price only, for listings Yahoo has no history for (CDRs). Refuses stale prices."""
+    import time
+    r = requests.get(URL.format(t=ticker).replace("range=2y", "range=5d"), headers=HEADERS, timeout=30)
+    r.raise_for_status()
+    chart = r.json()["chart"]
+    if chart.get("error") or not chart.get("result"):
+        raise DataError(f"{ticker}: {chart.get('error')}")
+    meta = chart["result"][0]["meta"]
+    if meta.get("currency") != currency:
+        raise DataError(f"{ticker}: expected {currency}, got {meta.get('currency')}")
+    price, when = meta.get("regularMarketPrice"), meta.get("regularMarketTime", 0)
+    if not price or time.time() - when > max_age_days * 86400:
+        raise DataError(f"{ticker}: no recent price")
+    return float(price)
+
+
+def snapshot(tickers: list[str], skip_missing: bool = False, currencies: dict | None = None,
+             signals_from: dict | None = None) -> dict:
     """{ticker: {"price", "dollar_volume_20d", "signals"}} for the universe.
-    With skip_missing, tickers whose data can't be loaded are left out (with a
-    warning) instead of stopping the run."""
+    A CDR (signals_from[ticker] = its US stock) gets its trend signals from the US stock's
+    history, since it tracks it (currency-hedged), and its price from its own listing.
+    With skip_missing, tickers whose data can't be loaded are left out (with a warning)
+    instead of stopping the run."""
     out = {}
     for t in tickers:
+        twin = (signals_from or {}).get(t)
         try:
-            d = fetch(t, (currencies or {}).get(t, "CAD"))
+            if twin:
+                d = fetch(twin, "USD")
+                d["price"] = quote(t, (currencies or {}).get(t, "CAD"))
+            else:
+                d = fetch(t, (currencies or {}).get(t, "CAD"))
         except (DataError, requests.RequestException) as e:
             if not skip_missing:
                 raise DataError(str(e)) from e

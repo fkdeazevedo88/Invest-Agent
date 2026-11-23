@@ -178,12 +178,19 @@ def max_positions(cfg: dict) -> int:
 
 
 def candidates(snap: dict, cfg: dict, buyable: set | None = None, held: set | None = None) -> list[str]:
-    """Every stock the configured strategy would consider right now, best first."""
+    """Every stock the configured strategy would consider right now, best first. When a US
+    stock and its Canadian CDR both qualify, only the CDR is kept (CAD, cheaper per unit)."""
+    out = _candidates(snap, cfg, buyable, held)
+    twins = {snap[t].get("signal") for t in out if snap[t].get("signal")}
+    return [t for t in out if t not in twins]
+
+
+def _candidates(snap: dict, cfg: dict, buyable: set | None = None, held: set | None = None) -> list[str]:
     name = cfg.get("strategy", "etf_trend")
     if name == "combo":
         out = []
         for part in params(cfg, "combo")["parts"]:
-            out += [t for t in candidates(snap, {**cfg, "strategy": part}, buyable, held) if t not in out]
+            out += [t for t in _candidates(snap, {**cfg, "strategy": part}, buyable, held) if t not in out]
         return out
     fn = {"momentum": momentum_candidates, "breakout": breakout_candidates, "pullback": pullback_candidates,
           "sector_rotation": sector_rotation_candidates, "leveraged_trend": leveraged_candidates}[name]

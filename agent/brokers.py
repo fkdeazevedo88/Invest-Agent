@@ -31,7 +31,7 @@ def moomoo_code(u: dict) -> str:
         if "." in t or "-" in t:
             raise BrokerError(f"{t}: give its moomoo symbol explicitly in the config")
         return "US." + t
-    if not t.endswith(".TO") or "-" in t:
+    if not t.endswith((".TO", ".NE")) or "-" in t:
         raise BrokerError(f"{t}: give its moomoo symbol explicitly in the config")
     return "CA." + t[:-3]
 
@@ -468,6 +468,15 @@ class MoomooBroker:
         entry["order_id"] = str(df["order_id"][0])
         self._save()
         return {"status": "submitted", "order_id": entry["order_id"], "price": limit}
+
+    def check_symbol(self, ticker: str, price: float) -> tuple[bool, str]:
+        """Ask moomoo whether it would accept a buy order for this symbol, without placing
+        one (acctradinginfo_query only returns how many shares could be bought)."""
+        ret, df = self.ctx.acctradinginfo_query(
+            order_type=self.mm.OrderType.NORMAL, code=self.to_mm[ticker], price=round(price, 2), **self._args())
+        if ret != self.mm.RET_OK:
+            return False, str(df)
+        return True, "OK"
 
     def reserved(self) -> dict:
         """Value held by orders that haven't finished, by currency: cash set aside

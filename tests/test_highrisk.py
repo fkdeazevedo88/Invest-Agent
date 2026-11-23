@@ -73,8 +73,9 @@ class MomentumRulesTest(unittest.TestCase):
         self.assertFalse(hr & {"ENB.TO", "BN.TO", "BAM.TO"})
         self.assertNotEqual(self.cfg["state_dir"], "state")
         for u in self.cfg["universe"]:
-            if u["ticker"].endswith(".TO"):
+            if u["ticker"].endswith((".TO", ".NE")):
                 self.assertEqual(brokers.moomoo_code(u), "CA." + u["ticker"][:-3])
+                self.assertEqual(brokers.currency_of(u), "CAD")
             else:
                 self.assertEqual(u.get("market"), "US")
                 self.assertEqual(brokers.moomoo_code(u), "US." + u["ticker"])
@@ -214,6 +215,15 @@ class CurrencyAndNewsTest(HighRiskBase):
         sold_before = list(self.acct.sells)
         self.run_agent(self.etf_cfg, self.etf_dir, etf_target={})   # wants out of XIU
         self.assertEqual(self.acct.sells, sold_before)       # frozen: not traded
+
+    def test_symbol_check_places_no_orders(self):
+        b = brokers.MoomooBroker(self.hr_cfg, self.hr_dir)
+        self.assertEqual(b.check_symbol("NVDA.NE", 36.6), (True, "OK"))
+        b.to_mm["FAKE.TO"] = "CA.BOGUS"
+        ok, msg = b.check_symbol("FAKE.TO", 10.0)
+        self.assertFalse(ok)
+        self.assertIn("unknown", msg)
+        self.assertEqual(self.acct.today, [])
 
     def test_old_single_currency_records_still_load(self):
         (self.hr_dir / "paper_account.json").write_text('{"cash": 250.0, "positions": {"CCO.TO": 2}}')

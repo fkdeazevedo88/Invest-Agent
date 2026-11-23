@@ -166,8 +166,8 @@ strategies (`strategy:` in the config):
 | Strategy | Idea |
 |---|---|
 | `momentum` | Hold the 4 strongest recent winners that are still trending up; sell one that falls 15% from its 20-day high. |
-| `breakout` | Buy stocks hitting new 52-week highs; keep them while they stay within 12% of the high. |
-| `pullback` (default) | Buy the dip in strong stocks: up 10%+ over 6 months but recently down 7-20% and oversold (RSI under 40); sell when they bounce back near the high, or if the drop goes past 20%. |
+| `breakout` (default) | Buy stocks hitting new 52-week highs; keep them while they stay within 12% of the high. |
+| `pullback` | Buy the dip in strong stocks: up 10%+ over 6 months but recently down 7-20% and oversold (RSI under 40); sell when they bounce back near the high, or if the drop goes past 20%. |
 | `sector_rotation` | Find the 2 hottest sectors (gold, uranium, chips, software...) and hold the 2 strongest stocks in each. |
 | `leveraged_trend` | Hold QQU (2x NASDAQ-100, CAD) and TQQQ (3x, USD) only while they're in an uptrend; otherwise cash. |
 | `combo` | Split the money evenly across several strategies (default: momentum + pullback). |
@@ -191,6 +191,21 @@ and never borrows: put the US dollars in the account yourself (moomoo app: curre
 set `capital_usd: 0` to skip NASDAQ. Profit and loss are shown in CAD at today's exchange rate.
 With small amounts, expensive shares (for example US$300+) can't be bought; the agent skips them.
 
+**CDRs (Canadian Depositary Receipts).** The list includes 12 CDRs on Cboe Canada (NVDA.NE, AAPL.NE,
+MSFT.NE, AMZN.NE, GOOG.NE, META.NE, TSLA.NE, AMD.NE, AVGO.NE, NFLX.NE, PLTR.NE, CRWD.NE): the same US
+companies, traded in CAD, currency-hedged, at a fraction of the share price (NVIDIA's CDR was about
+C$36 when the share was about US$165). Yahoo has no price history for CDRs, so the agent judges their
+trend from the US stock (`signal:` in the config) and trades the CDR at its own current price. When a
+US stock and its CDR both qualify, it buys only the CDR.
+
+Before trading live, ask moomoo whether it accepts every symbol (it places no orders):
+
+```bash
+.venv/bin/python run.py check --live --config config-highrisk.yaml
+```
+
+Add any symbol it rejects to `exclude:` in the config.
+
 **Its own money and records.** It manages its own money, recorded in `state-highrisk/` on its first
 run, separate from the ETF agent. Changing `capital_*` later doesn't change what it was given. The same safety rules apply: it never sells
 anything it didn't buy, never borrows, never short sells, and it never trades your own stocks or
@@ -204,30 +219,39 @@ stops trading that stock until you check. Its kill switch is at -40%.
 .venv/bin/python run.py backtest --config config-highrisk.yaml --strategy all
 ```
 
-Result on Nov 23, 2026 (weekly, in CAD, after trading costs, $1,000 start):
+Result on Nov 23, 2026, with the 12 CDRs (weekly, in CAD, after trading costs). A weekly strategy's
+result can depend a lot on which weekday it happens to trade, so the backtest replays each strategy
+starting on all 5 weekdays and reports the median and the range:
 
-| Strategy | Total (3.8 yrs) | Worst drop | 1st half (Dec 2022 - Nov 2024) | 2nd half (Nov 2024 - Nov 2026) |
+| Strategy | Total (median) | Range over weekdays | Last 2 years (median) | Worst drop |
 |---|---|---|---|---|
-| momentum | +726% | -47% | +337% | **-49%** |
-| breakout | +512% | -52% | +295% | -4% |
-| pullback | +1072% | -33% | +332% | **+42%** |
-| sector_rotation | +174% | -37% | +171% | -50% |
-| leveraged_trend | +64% | -20% | +50% | -1% |
-| combo (momentum + pullback) | +701% | -40% | +320% | -17% |
-| just hold XIU (TSX) | +94% | -10% | +32% | +42% |
-| just hold QQQ (NASDAQ) | +150% | -22% | +85% | +34% |
+| momentum | +209% | +62% to +713% | -30% | -59% |
+| **breakout (default)** | **+410%** | **+232% to +506%** | **+50%** | -51% |
+| pullback | +282% | +89% to +1061% | +35% | -46% |
+| sector_rotation | +249% | +126% to +327% | -12% | -58% |
+| leveraged_trend | +40% | +27% to +64% | +6% | -22% |
+| combo (momentum + pullback) | +328% | +129% to +687% | +9% | -46% |
+| just hold XIU (TSX) | +94% | | +42% | -10% |
+| just hold QQQ (NASDAQ) | +150% | | +34% | -22% |
 
-**Read this table with care.** The huge totals come almost entirely from the first half, and they
-are mostly hindsight: the NASDAQ list was chosen in 2026 and includes stocks that are now known to
-have soared (Palantir, AppLovin, Strategy, Rocket Lab...). On the TSX list alone, momentum made
-+44% over the whole period, less than holding XIU. In the last two years, every high-risk strategy
-did worse than or the same as simply holding the market, and momentum lost about half its money.
-`pullback` is the only one that made money in both halves. High risk does not mean high reward;
-it means a wider range of outcomes, good and bad.
+Breakout is the default because it had the best median, the narrowest range (it never did badly on
+any weekday) and the best last two years, ahead of holding XIU. An earlier version of this README
+showed pullback at +1072%: that was one lucky weekday; its median is +282%.
+
+**Read this table with care.** The totals are mostly hindsight: the stock list was chosen in 2026 and
+includes stocks now known to have soared (Palantir, AppLovin, Strategy, Rocket Lab...). On the TSX
+list alone, momentum made +44% over the whole period, less than holding XIU. Expect real results to
+be far lower than this table, and worst drops of 40-60%. High risk does not mean high reward; it
+means a wider range of outcomes, good and bad.
 
 Loosening pullback's stop (selling only past a 25% or 30% dip instead of 20%) made every result worse
-in the same backtest (for example total +1072% -> +588%, worst drop -33% -> -47%, last two years
-+42% -> +8%), so the high-risk agent keeps the 20% limit.
+in an earlier test, so its 20% limit stays. An "oversold rebound" strategy (buying stocks right after
+a 15-30% crash, which would have caught NVIDIA's +32% day on Nov 23, 2026) was also tested and lost
+money overall (last two years -8% to -50%): for every crashed stock that bounces, others keep falling.
+
+**Weekly, not daily.** Running the same rules every day did worse for both agents: the ETF agent
++53% daily vs +63% weekly (median), and pullback +18% daily vs +282% weekly, mostly because trading
+twice as often doubles the trading costs. Checking `status` daily is fine; trade weekly.
 
 Run it on pretend money first:
 
@@ -239,6 +263,6 @@ Run it on pretend money first:
 .venv/bin/python run.py status --config config-highrisk.yaml
 ```
 
-Live (real money), exactly like the ETF agent, with `--config config-highrisk.yaml` added. For its
-stop-loss to react faster, run it every weekday instead of weekly. Keep enough CAD cash in the
-account for both agents (`capital_cad` of each), or the second one will buy less.
+Live (real money), exactly like the ETF agent, with `--config config-highrisk.yaml` added, once a
+week. Keep enough CAD cash in the account for both agents (`capital_cad` of each), or the second one
+will buy less.

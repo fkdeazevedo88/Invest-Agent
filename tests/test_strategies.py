@@ -157,6 +157,36 @@ class EtfPullbackTest(unittest.TestCase):
         self.assertEqual(run.load_config(ROOT / "config.yaml")["strategy"], "etf_trend")
 
 
+class CdrTest(unittest.TestCase):
+    """Canadian Depositary Receipts: CAD listings of US stocks, trends from the US twin."""
+
+    def setUp(self):
+        self.cfg = {**run.load_config(ROOT / "config-highrisk.yaml"), "strategy": "momentum"}
+
+    def test_symbols_and_config(self):
+        from agent.brokers import currency_of, moomoo_code
+        u = next(u for u in self.cfg["universe"] if u["ticker"] == "NVDA.NE")
+        self.assertEqual((moomoo_code(u), currency_of(u), u["signal"]), ("CA.NVDA", "CAD", "NVDA"))
+
+    def test_never_both_twins(self):
+        snap = {"NVDA": entry(r3=0.5), "NVDA.NE": entry(r3=0.5, price=36.0), "AMD": entry(r3=0.4)}
+        snap["NVDA.NE"]["signal"] = "NVDA"
+        picks = strategy.candidates(snap, self.cfg)
+        self.assertIn("NVDA.NE", picks)
+        self.assertNotIn("NVDA", picks)
+        self.assertIn("AMD", picks)
+        w = strategy.baseline(snap, self.cfg)
+        self.assertNotIn("NVDA", w)
+
+    def test_cdr_takes_its_trend_from_the_us_stock(self):
+        from unittest import mock
+        hist = {"NVDA": {"price": 165.0, "closes": [100 * 1.002 ** i for i in range(300)], "dollar_volume_20d": 5e9}}
+        with mock.patch.object(data, "fetch", lambda t, c="CAD": hist[t]), mock.patch.object(data, "quote", lambda t, c="CAD": 36.61):
+            snap = data.snapshot(["NVDA.NE"], currencies={"NVDA.NE": "CAD"}, signals_from={"NVDA.NE": "NVDA"})
+        self.assertEqual(snap["NVDA.NE"]["price"], 36.61)
+        self.assertTrue(snap["NVDA.NE"]["signals"]["above_200d_avg"])
+
+
 class SignalsTest(unittest.TestCase):
     def test_rsi(self):
         up = [100 * 1.01 ** i for i in range(300)]
@@ -203,6 +233,12 @@ class BacktestTest(unittest.TestCase):
         self.info["JUMP.TO"] = {"adj": jump, "dv": np.full(n, 1e8), "currency": "CAD", "sector": "c", "kind": "stock"}
         m = backtest.simulate(self.cfg, self.dates, self.info, self.fx)
         self.assertLess(m["best_week"], 0.05)     # peeking would show a ~+12% week (25% x 50%)
+
+    def test_daily_rebalancing(self):
+        weekly = backtest.simulate(self.cfg, self.dates, self.info, self.fx)
+        daily = backtest.simulate(self.cfg, self.dates, self.info, self.fx, step=1)
+        self.assertGreater(daily["total"], 0)
+        self.assertAlmostEqual(daily["total"], weekly["total"], delta=0.05)
 
     def test_buy_and_hold_and_halves(self):
         flat = backtest.buy_and_hold(self.info, "XIU.TO", self.dates, self.fx)

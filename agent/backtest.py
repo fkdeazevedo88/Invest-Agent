@@ -40,7 +40,7 @@ def load_all(cfg: dict, cache: Path | None) -> dict:
     """Daily history for the universe plus benchmarks and USD/CAD, cached for a day."""
     if cache and cache.exists() and time.time() - cache.stat().st_mtime < 86400:
         return json.loads(cache.read_text())
-    tickers = [u["ticker"] for u in cfg["universe"]] + ["XIU.TO", "QQQ", "CAD=X"]
+    tickers = [u.get("signal") or u["ticker"] for u in cfg["universe"]] + ["XIU.TO", "QQQ", "CAD=X"]
     raw = {}
     for t in dict.fromkeys(tickers):
         try:
@@ -68,9 +68,10 @@ def align(raw: dict, cfg: dict) -> tuple[list, dict, np.ndarray]:
     fx = np.where(np.isnan(fx), np.nanmean(fx), fx)
     info = {}
     for u in cfg["universe"]:
-        if u["ticker"] in raw:
-            a, dv = series(u["ticker"])
-            info[u["ticker"]] = {"adj": a, "dv": dv, "currency": currency_of(u),
+        src = u.get("signal") or u["ticker"]          # a CDR replays its US stock (currency-hedged)
+        if src in raw:
+            a, dv = series(src)
+            info[u["ticker"]] = {"adj": a, "dv": dv, "currency": currency_of(u), "signal": u.get("signal"),
                                  "sector": u.get("sector"), "kind": u.get("kind", "stock")}
     for t, c in (("XIU.TO", "CAD"), ("QQQ", "USD")):
         a, dv = series(t)
@@ -93,7 +94,7 @@ def snapshot_at(i: int, info: dict, fx: np.ndarray) -> dict:
             "dollar_volume_20d": float(s["dv"][max(0, i - 19): i + 1].mean()),
             "dollar_volume_cad": float(s["dv"][max(0, i - 19): i + 1].mean() * rate),
             "signals": data.signals(list(hist)), "currency": s["currency"],
-            "sector": s["sector"], "kind": s["kind"],
+            "sector": s["sector"], "kind": s["kind"], "signal": s.get("signal"),
         }
     return snap
 
@@ -102,28 +103,30 @@ def value_cad(s: dict, i: int, fx: np.ndarray) -> float:
     return s["adj"][i] * (fx[i] if s["currency"] == "USD" else 1.0)
 
 
-def simulate(cfg: dict, dates: list, info: dict, fx: np.ndarray, start: int = WARMUP, end: int | None = None) -> dict:
-    """Trade weekly from day index `start` to `end` (history before `start` feeds the signals)."""
+def simulate(cfg: dict, dates: list, info: dict, fx: np.ndarray, start: int = WARMUP, end: int | None = None,
+             step: int = STEP) -> dict:
+    """Trade every `step` trading days (5 = weekly, 1 = daily) from day index `start` to `end`
+    (history before `start` feeds the signals)."""
     cost = cfg["risk"]["limit_slippage"]
     end = len(dates) if end is None else end
     weights, equity, curve, weekly, invested, turnover_sum = {}, 1.0, [1.0], [], [], 0.0
     first = start
-    for i in range(first, end - STEP, STEP):
+    for i in range(first, end - step, step):
         snap = snapshot_at(i, info, fx)
         new = strategy.sanitize(strategy.baseline(snap, cfg, held=set(weights)), cfg, set(snap))
         turnover = sum(abs(new.get(t, 0) - weights.get(t, 0)) for t in set(new) | set(weights))
         turnover_sum += turnover
         equity *= 1 - turnover * cost
         weights = new
-        j = i + STEP
+        j = i + step
         r = sum(w * (value_cad(info[t], j, fx) / value_cad(info[t], i, fx) - 1) for t, w in weights.items())
         equity *= 1 + r
         weekly.append(r)
         curve.append(equity)
         invested.append(sum(w for t, w in weights.items() if t != cfg.get("cash_ticker")))   # cash ETF isn't "invested"
-    return metrics(curve, weekly, dates[first], dates[min(len(dates) - 1, first + STEP * len(weekly))],
+    return metrics(curve, weekly, dates[first], dates[min(len(dates) - 1, first + step * len(weekly))],
                    extra={"invested": float(np.mean(invested)) if invested else 0.0,
-                          "turnover_per_year": turnover_sum / max(1e-9, len(weekly) / 52)})
+                          "turnover_per_year": turnover_sum / max(1e-9, len(weekly) * step / 252)}, step=step)
 
 
 def buy_and_hold(info: dict, key: str, dates: list, fx: np.ndarray, start: int = WARMUP, end: int | None = None) -> dict:
@@ -138,8 +141,8 @@ def buy_and_hold(info: dict, key: str, dates: list, fx: np.ndarray, start: int =
                    extra={"invested": 1.0, "turnover_per_year": 0.0})
 
 
-def metrics(curve, weekly, start, end, extra) -> dict:
-    years = len(weekly) / 52 or 1
+def metrics(curve, weekly, start, end, extra, step: int = STEP) -> dict:
+    years = len(weekly) * step / 252 or 1
     peak, worst = 0.0, 0.0
     for v in curve:
         peak = max(peak, v)
@@ -176,24 +179,34 @@ def main(cfg: dict, which: str | None, cache_dir: Path | None = None):
     print("Loading 5 years of prices (cached for a day)...")
     dates, info, fx = align(load_all(cfg, cache_dir / "backtest_prices.json"), cfg)
     mid = WARMUP + (len(dates) - WARMUP) // 2
+    capital = 1000.0
+    # A weekly strategy's result can depend a lot on which weekday it trades. Replay each one
+    # starting on all 5 weekdays and report the median, the range, and the worst drop.
+    print("  (each strategy is replayed 5 times, once per weekday; this takes a few minutes)")
     rows = []
     for n in names:
         print(f"  replaying {n}...")
         c = {**cfg, "strategy": n}
-        rows.append((n, simulate(c, dates, info, fx), simulate(c, dates, info, fx, end=mid),
-                     simulate(c, dates, info, fx, start=mid)))
+        runs = [simulate(c, dates, info, fx, start=WARMUP + off) for off in range(STEP)]
+        second = [simulate(c, dates, info, fx, start=mid + off) for off in range(STEP)]
+        rows.append((n, runs, second))
     for label, key in (("hold XIU (TSX)", "XIU.TO"), ("hold QQQ (NASDAQ)", "QQQ")):
-        rows.append((label, buy_and_hold(info, key, dates, fx), buy_and_hold(info, key, dates, fx, end=mid),
-                     buy_and_hold(info, key, dates, fx, start=mid)))
-    m0 = rows[0][1]
-    print(f"\nWeekly rebalancing, {m0['start']} to {m0['end']} ({m0['years']:.1f} years), in CAD, after trading costs.")
-    print(f"Halves: {dates[WARMUP]} to {dates[mid]}, and {dates[mid]} to {dates[-1]}.\n")
-    capital = 1000.0
-    print(table(rows, capital))
-    print("\n'invested' = average share of the money in stocks (the rest waited in cash).")
-    print("A strategy worth trusting should do well in BOTH halves, not just one.")
+        rows.append((label, [buy_and_hold(info, key, dates, fx)], [buy_and_hold(info, key, dates, fx, start=mid)]))
+    first = rows[0][1][0]
+    print(f"\nWeekly rebalancing, {first['start']} to {first['end']} ({first['years']:.1f} years), in CAD, after trading costs.")
+    print(f"'last 2 yrs' = {dates[mid]} to {dates[-1]}.\n")
+    med = lambda ms: float(np.median([m["total"] for m in ms]))  # noqa: E731
+    print(f"{'strategy':<19}{'total':>8}{'range over weekdays':>24}{'last 2 yrs':>12}{'worst drop':>12}{'invested':>10}   ${capital:,.0f} became")
+    for name, runs, second in rows:
+        lo, hi = min(m["total"] for m in runs), max(m["total"] for m in runs)
+        rng = f"{lo*100:+.0f}% to {hi*100:+.0f}%" if len(runs) > 1 else ""
+        print(f"{name:<19}{med(runs)*100:>+7.0f}%{rng:>24}{med(second)*100:>+11.0f}%{min(m['max_drop'] for m in runs)*100:>11.0f}%"
+              f"{np.median([m['invested'] for m in runs])*100:>9.0f}%   ${capital * (1 + med(runs)):,.0f}")
+    print("\n'total' and 'last 2 yrs' are medians over the 5 weekdays; 'worst drop' is the worst of them.")
+    print("A strategy worth trusting has a narrow range and does well in the last 2 years too.")
+    print("'invested' = average share of the money in stocks (the rest waited in cash).")
     print("Caution: the stock list was picked today from companies that survived and, for many, soared,")
-    print("so these results are flattered (the 1st half most). Past results don't predict future ones.")
+    print("so these results are flattered. Past results don't predict future ones.")
     print("Fractional shares and no news check assumed.")
     for n in names:
         print(f"\n{n}: {strategy.STRATEGIES[n]}")

@@ -6,6 +6,7 @@
   python run.py run --dry-run   decide and show orders, place nothing
   python run.py run --live      one cycle with REAL money on moomoo
   python run.py accounts        list your moomoo accounts and which one the agent uses
+  python run.py check --live    ask moomoo whether it accepts every symbol (places no orders)
 
 Add --config config-highrisk.yaml to any command to use the HIGH-RISK stock agent
 instead of the ETF agent. Each agent has its own money, records and state folder.
@@ -124,11 +125,12 @@ def cycle(args, cfg):
         if broker.live:
             print(f"Trading moomoo {broker.acc_type} account {broker.acc_id}")
         fx = data.fx_rates(set(currencies.values()) | {c for c, v in {**broker.own_cash(), **broker.start()}.items() if v})
-        snap = data.snapshot(tickers, skip_missing=momentum, currencies=currencies)
+        twins = {u["ticker"]: u["signal"] for u in cfg["universe"] if u.get("signal")}
+        snap = data.snapshot(tickers, skip_missing=momentum, currencies=currencies, signals_from=twins)
         for tk, d in snap.items():
             c = currencies[tk]
             d.update(currency=c, price_cad=d["price"] * fx[c], dollar_volume_cad=d["dollar_volume_20d"] * fx[c],
-                     sector=info[tk].get("sector"), kind=info[tk].get("kind", "stock"))
+                     sector=info[tk].get("sector"), kind=info[tk].get("kind", "stock"), signal=info[tk].get("signal"))
         prices = {tk: d["price"] for tk, d in snap.items()}          # in each stock's own currency
         prices_cad = {tk: d["price_cad"] for tk, d in snap.items()}
         a = account(broker, prices, fx, cfg)
@@ -252,6 +254,31 @@ def status(args, cfg):
         print(f"\nHALTED: {HALT.read_text().strip()}")
 
 
+def check(args, cfg):
+    """Ask moomoo, for every symbol the agent may trade, whether it would accept an order.
+    Places nothing. Use it once before trading live, and after adding symbols."""
+    if not args.live:
+        sys.exit("check talks to moomoo: run it with --live (it places no orders)")
+    broker = MoomooBroker(cfg, STATE)
+    try:
+        print(f"moomoo {broker.acc_type} account {broker.acc_id}: checking {len(cfg['universe'])} symbols (no orders)...\n")
+        bad = []
+        for u in cfg["universe"]:
+            t = u["ticker"]
+            try:
+                price = data.quote(t, currency_of(u)) if u.get("signal") else data.fetch(t, currency_of(u))["price"]
+            except data.DataError as e:
+                print(f"  ?   {t:<9} no price data ({e})")
+                continue
+            ok, msg = broker.check_symbol(t, price)
+            print(f"  {'OK ' if ok else 'NO '} {t:<9} {broker.to_mm[t]:<11} {'' if ok else msg}")
+            if not ok:
+                bad.append(t)
+        print(f"\n{len(bad)} symbol(s) moomoo won't accept" + (": " + ", ".join(bad) + ". Add them to `exclude:` in the config, or tell Claude." if bad else "."))
+    finally:
+        broker.close()
+
+
 def load_config(path: Path) -> dict:
     cfg = yaml.safe_load(path.read_text())
     for u in cfg["universe"]:
@@ -264,7 +291,7 @@ def load_config(path: Path) -> dict:
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("command", choices=["run", "status", "accounts", "backtest"])
+    p.add_argument("command", choices=["run", "status", "accounts", "backtest", "check"])
     p.add_argument("--live", action="store_true", help="use the real moomoo account (real money)")
     p.add_argument("--dry-run", action="store_true", help="show the decision and orders without placing them")
     p.add_argument("--config", default="config.yaml", help="config file (config-highrisk.yaml for the high-risk agent)")
@@ -289,7 +316,7 @@ def main():
     try:
         # One lock for ALL agents: two agents running at once could spend the same cash.
         with RunLock(ROOT / "run.lock"):
-            (cycle if args.command == "run" else status)(args, cfg)
+            {"run": cycle, "status": status, "check": check}[args.command](args, cfg)
     except (BrokerError, data.DataError) as e:
         sys.exit(f"Stopped, nothing further done: {e}")
 

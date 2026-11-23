@@ -60,6 +60,7 @@ class FakeAccount:
 
 
 ACCOUNT: FakeAccount = None
+UNKNOWN_CODES = {"CA.BOGUS"}
 
 
 def frame(rows):
@@ -111,6 +112,11 @@ class FakeCtx:
             a.crash_after_accept = False
             raise ConnectionError("lost connection after the order was accepted")
         return 0, pd.DataFrame({"order_id": [str(a.ids)]})
+
+    def acctradinginfo_query(self, order_type, code, price, **kw):
+        if code in UNKNOWN_CODES:
+            return -1, f"unknown stock {code}"
+        return 0, pd.DataFrame({"max_cash_buy": [100]})
 
     def order_list_query(self, order_id="", **kw):
         rows = [o for o in ACCOUNT.today if not order_id or o["order_id"] == order_id]

@@ -3,7 +3,7 @@
 # losing 30-50% of this money is possible. Only use money you can afford to lose.
 name: HIGH-RISK agent
 state_dir: state-highrisk     # its own records, separate from the ETF agent
-strategy: pullback            # momentum, breakout, pullback, sector_rotation, leveraged_trend, or combo
+strategy: breakout            # momentum, breakout, pullback, sector_rotation, leveraged_trend, or combo
                               # (compare them first: python run.py backtest --config config-highrisk.yaml --strategy all)
 
 capital_cad: 500              # Canadian dollars this agent manages (for TSX stocks)
@@ -154,6 +154,21 @@ universe:
   - {ticker: "ABNB", sector: consumer, market: US, name: Airbnb}
   - {ticker: "DASH", sector: consumer, market: US, name: DoorDash}
   - {ticker: "UPST", sector: crypto_fintech, market: US, name: Upstart (AI lending)}
+  # Canadian Depositary Receipts (Cboe Canada): US stocks in CAD, currency-hedged, at a
+  # fraction of the share price. Trends come from the US stock (`signal`); if both qualify,
+  # the agent buys the CDR, never both. Check moomoo accepts them: python run.py check --live
+  - {ticker: NVDA.NE, signal: "NVDA", sector: chips_hardware, name: NVIDIA CDR (CAD-hedged)}
+  - {ticker: AAPL.NE, signal: "AAPL", sector: big_tech, name: Apple CDR (CAD-hedged)}
+  - {ticker: MSFT.NE, signal: "MSFT", sector: big_tech, name: Microsoft CDR (CAD-hedged)}
+  - {ticker: AMZN.NE, signal: "AMZN", sector: big_tech, name: Amazon CDR (CAD-hedged)}
+  - {ticker: GOOG.NE, signal: "GOOGL", sector: big_tech, name: Alphabet (Google) CDR (CAD-hedged)}
+  - {ticker: META.NE, signal: "META", sector: big_tech, name: Meta CDR (CAD-hedged)}
+  - {ticker: TSLA.NE, signal: "TSLA", sector: future_tech, name: Tesla CDR (CAD-hedged)}
+  - {ticker: AMD.NE, signal: "AMD", sector: chips_hardware, name: AMD CDR (CAD-hedged)}
+  - {ticker: AVGO.NE, signal: "AVGO", sector: chips_hardware, name: Broadcom CDR (CAD-hedged)}
+  - {ticker: NFLX.NE, signal: "NFLX", sector: big_tech, name: Netflix CDR (CAD-hedged)}
+  - {ticker: PLTR.NE, signal: "PLTR", sector: software, name: Palantir CDR (CAD-hedged)}
+  - {ticker: CRWD.NE, signal: "CRWD", sector: software, name: CrowdStrike CDR (CAD-hedged)}
   # Leveraged ETFs: used ONLY by the leveraged_trend strategy (and combos that include it).
   # They move 2-3x the NASDAQ-100 each day, up AND down, and lose value in choppy markets.
   - {ticker: QQU.TO, kind: leveraged_etf, name: Global X 2x NASDAQ-100 Daily Bull (CAD)}
