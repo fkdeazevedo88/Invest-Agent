@@ -94,6 +94,7 @@ class HighRiskBase(unittest.TestCase):
             c["claude"]["enabled"] = False
             c["moomoo"]["fill_wait_seconds"] = 0
             c["moomoo"]["account_type"] = "MARGIN"
+            c["rebalance_every_days"] = 0                  # these tests trade on consecutive runs
         self.hr_cfg["capital_cad"], self.hr_cfg["capital_usd"] = 500, 0   # CAD-only unless a test says otherwise
         self.hr_cfg["strategy"] = "momentum"                               # these tests exercise momentum's picks
         self.snap = {t: {"price": p, "dollar_volume_20d": 5e7, "signals": sig()} for t, p in fake.PRICES.items()}
@@ -215,6 +216,34 @@ class CurrencyAndNewsTest(HighRiskBase):
         sold_before = list(self.acct.sells)
         self.run_agent(self.etf_cfg, self.etf_dir, etf_target={})   # wants out of XIU
         self.assertEqual(self.acct.sells, sold_before)       # frozen: not traded
+
+    def test_trades_only_when_due_but_safety_runs_every_time(self):
+        self.etf_cfg["rebalance_every_days"] = 28
+        self.run_agent(self.etf_cfg, self.etf_dir, etf_target={"XIU.TO": 0.4})
+        orders = len(self.acct.today)
+        self.assertGreater(orders, 0)
+        self.run_agent(self.etf_cfg, self.etf_dir, etf_target={})          # next day: not due, nothing sold
+        self.assertEqual(len(self.acct.today), orders)
+        with mock.patch.object(run, "next_rebalance", lambda cfg, mode="paper": None):  # 28 days later: due
+            self.run_agent(self.etf_cfg, self.etf_dir, etf_target={})
+        self.assertGreater(len(self.acct.today), orders)
+
+    def test_paper_runs_dont_delay_the_first_real_run(self):
+        self.etf_cfg["rebalance_every_days"] = 28
+        import json
+        (self.etf_dir / "j").write_text(json.dumps(   # run_agent uses state/j as the journal
+            {"time": "2099-01-01T00:00:00+00:00", "mode": "paper", "source": "rules", "target": {}, "rationale": ""}) + "\n")
+        self.run_agent(self.etf_cfg, self.etf_dir, etf_target={"XIU.TO": 0.4})   # live run
+        self.assertGreater(len(self.acct.today), 0)
+
+    def test_kill_switch_works_even_when_not_due(self):
+        self.etf_cfg["rebalance_every_days"] = 28
+        self.run_agent(self.etf_cfg, self.etf_dir, etf_target={"XIU.TO": 0.4, "VFV.TO": 0.4})
+        crash = {t: dict(d, price=d["price"] * 0.5) for t, d in self.snap.items()}
+        self.snap.update(crash)                                           # everything halves the next day
+        self.run_agent(self.etf_cfg, self.etf_dir, etf_target={"XIU.TO": 0.4, "VFV.TO": 0.4})
+        self.assertTrue((self.etf_dir / "HALT").exists())
+        self.assertGreater(len(self.acct.sells), 0)
 
     def test_symbol_check_places_no_orders(self):
         b = brokers.MoomooBroker(self.hr_cfg, self.hr_dir)

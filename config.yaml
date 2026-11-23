@@ -1,6 +1,9 @@
 # ---- Investing agent configuration ----
 capital_cad: 1000          # starting money; also the baseline for the kill switch
 max_equity_cad: 2000       # hard ceiling: the agent never manages more than this, even if the account holds more
+rebalance_every_days: 28      # trade once every 4 weeks. Running it more often only checks the
+                              # safety rules; it trades when due (or with --force). In the Nov 2026
+                              # backtest, monthly beat daily and weekly for both agents.
 
 # Everything the agent is allowed to buy. All are CAD-denominated TSX ETFs,
 # so there is no currency conversion. `moomoo` is the symbol on moomoo.

@@ -1,7 +1,8 @@
 # Investing agent ($1,000 CAD, moomoo)
 
-An automated agent that manages a small portfolio of Canadian ETFs. Once a week it reads market data,
-decides target weights, and places whole-share limit orders. By default it trades a **paper**
+An automated agent that manages a small portfolio of Canadian ETFs. Every 4 weeks it reads market data,
+decides target weights, and places whole-share limit orders (`rebalance_every_days: 28`; running it
+more often only checks the safety rules, unless you add `--force`). By default it trades a **paper**
 (simulated) account. Real money only moves with `--live`.
 
 ## How it decides
@@ -249,9 +250,21 @@ in an earlier test, so its 20% limit stays. An "oversold rebound" strategy (buyi
 a 15-30% crash, which would have caught NVIDIA's +32% day on Nov 23, 2026) was also tested and lost
 money overall (last two years -8% to -50%): for every crashed stock that bounces, others keep falling.
 
-**Weekly, not daily.** Running the same rules every day did worse for both agents: the ETF agent
-+53% daily vs +63% weekly (median), and pullback +18% daily vs +282% weekly, mostly because trading
-twice as often doubles the trading costs. Checking `status` daily is fine; trade weekly.
+**How often to trade: every 4 weeks.** The same rules were replayed trading daily, weekly, monthly,
+quarterly and yearly (Nov 2026 backtest, median of 5 start days, worst drop measured daily):
+
+| Agent / strategy | Daily | Weekly | **Monthly** | Quarterly | Yearly |
+|---|---|---|---|---|---|
+| ETF agent (trend) | +53% | +63% | **+73%** (+72 to +80) | +79% (+72 to +87) | +70% |
+| High-risk breakout | +116% | +410% | **+694%** (+498 to +1020) | +324% | +379% |
+| High-risk pullback | +18% | +282% | +149% | +405% | +150% |
+| High-risk momentum | +60% | +209% | +537% | +649% | +418% |
+
+Daily was the worst for every strategy, because trading often multiplies costs and reacts to noise.
+Monthly was the best or close to it, the steadiest across start days, and keeps the safety checks
+frequent, so both agents trade every 28 days. Breakout monthly also had the best last two years
+(+74%) and the smallest worst drop (-44%) of the high-risk options. The kill switch is still checked
+on every run, due or not. These totals carry the same hindsight caution as the table above.
 
 Run it on pretend money first:
 
@@ -263,6 +276,6 @@ Run it on pretend money first:
 .venv/bin/python run.py status --config config-highrisk.yaml
 ```
 
-Live (real money), exactly like the ETF agent, with `--config config-highrisk.yaml` added, once a
-week. Keep enough CAD cash in the account for both agents (`capital_cad` of each), or the second one
+Live (real money), exactly like the ETF agent, with `--config config-highrisk.yaml` added. It
+trades every 28 days; running it in between only checks the safety rules. Keep enough CAD cash in the account for both agents (`capital_cad` of each), or the second one
 will buy less.

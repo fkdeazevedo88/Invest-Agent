@@ -110,6 +110,7 @@ def simulate(cfg: dict, dates: list, info: dict, fx: np.ndarray, start: int = WA
     cost = cfg["risk"]["limit_slippage"]
     end = len(dates) if end is None else end
     weights, equity, curve, weekly, invested, turnover_sum = {}, 1.0, [1.0], [], [], 0.0
+    daily = [1.0]
     first = start
     for i in range(first, end - step, step):
         snap = snapshot_at(i, info, fx)
@@ -119,32 +120,41 @@ def simulate(cfg: dict, dates: list, info: dict, fx: np.ndarray, start: int = WA
         equity *= 1 - turnover * cost
         weights = new
         j = i + step
+        for d in range(i + 1, j):          # mark to market every day in between, for an honest worst drop
+            daily.append(equity * (1 + sum(w * (value_cad(info[t], d, fx) / value_cad(info[t], i, fx) - 1)
+                                           for t, w in weights.items())))
         r = sum(w * (value_cad(info[t], j, fx) / value_cad(info[t], i, fx) - 1) for t, w in weights.items())
         equity *= 1 + r
+        daily.append(equity)
         weekly.append(r)
         curve.append(equity)
         invested.append(sum(w for t, w in weights.items() if t != cfg.get("cash_ticker")))   # cash ETF isn't "invested"
     return metrics(curve, weekly, dates[first], dates[min(len(dates) - 1, first + step * len(weekly))],
                    extra={"invested": float(np.mean(invested)) if invested else 0.0,
-                          "turnover_per_year": turnover_sum / max(1e-9, len(weekly) * step / 252)}, step=step)
+                          "turnover_per_year": turnover_sum / max(1e-9, len(weekly) * step / 252)},
+                   step=step, drop_curve=daily)
 
 
 def buy_and_hold(info: dict, key: str, dates: list, fx: np.ndarray, start: int = WARMUP, end: int | None = None) -> dict:
     s = info["__" + key]
     end = len(dates) if end is None else end
     curve, weekly = [1.0], []
+    daily = [1.0]
     for i in range(start, end - STEP, STEP):
+        for d in range(i + 1, i + STEP):
+            daily.append(curve[-1] * value_cad(s, d, fx) / value_cad(s, i, fx))
         r = value_cad(s, i + STEP, fx) / value_cad(s, i, fx) - 1
         weekly.append(r)
         curve.append(curve[-1] * (1 + r))
+        daily.append(curve[-1])
     return metrics(curve, weekly, dates[start], dates[min(len(dates) - 1, start + STEP * len(weekly))],
-                   extra={"invested": 1.0, "turnover_per_year": 0.0})
+                   extra={"invested": 1.0, "turnover_per_year": 0.0}, drop_curve=daily)
 
 
-def metrics(curve, weekly, start, end, extra, step: int = STEP) -> dict:
+def metrics(curve, weekly, start, end, extra, step: int = STEP, drop_curve=None) -> dict:
     years = len(weekly) * step / 252 or 1
     peak, worst = 0.0, 0.0
-    for v in curve:
+    for v in (drop_curve or curve):
         peak = max(peak, v)
         worst = min(worst, v / peak - 1)
     total = curve[-1]
@@ -180,29 +190,33 @@ def main(cfg: dict, which: str | None, cache_dir: Path | None = None):
     dates, info, fx = align(load_all(cfg, cache_dir / "backtest_prices.json"), cfg)
     mid = WARMUP + (len(dates) - WARMUP) // 2
     capital = 1000.0
-    # A weekly strategy's result can depend a lot on which weekday it trades. Replay each one
-    # starting on all 5 weekdays and report the median, the range, and the worst drop.
-    print("  (each strategy is replayed 5 times, once per weekday; this takes a few minutes)")
+    # Trade as often as the config says (rebalance_every_days, in calendar days; default weekly).
+    # A strategy's result can depend a lot on the day it happens to trade, so replay each one
+    # from 5 different start days and report the median, the range, and the worst drop.
+    step = max(1, round(cfg.get("rebalance_every_days", 7) * 5 / 7))
+    offsets = sorted({round(k * step / 5) for k in range(5)})
+    print(f"  (trading every {step} market days; each strategy is replayed from {len(offsets)} start days; this takes a few minutes)")
     rows = []
     for n in names:
         print(f"  replaying {n}...")
         c = {**cfg, "strategy": n}
-        runs = [simulate(c, dates, info, fx, start=WARMUP + off) for off in range(STEP)]
-        second = [simulate(c, dates, info, fx, start=mid + off) for off in range(STEP)]
+        runs = [simulate(c, dates, info, fx, start=WARMUP + off, step=step) for off in offsets]
+        second = [simulate(c, dates, info, fx, start=mid + off, step=step) for off in offsets]
         rows.append((n, runs, second))
     for label, key in (("hold XIU (TSX)", "XIU.TO"), ("hold QQQ (NASDAQ)", "QQQ")):
         rows.append((label, [buy_and_hold(info, key, dates, fx)], [buy_and_hold(info, key, dates, fx, start=mid)]))
     first = rows[0][1][0]
-    print(f"\nWeekly rebalancing, {first['start']} to {first['end']} ({first['years']:.1f} years), in CAD, after trading costs.")
+    print(f"\nTrading every {step} market days, {first['start']} to {first['end']} ({first['years']:.1f} years), in CAD, after costs.")
     print(f"'last 2 yrs' = {dates[mid]} to {dates[-1]}.\n")
     med = lambda ms: float(np.median([m["total"] for m in ms]))  # noqa: E731
-    print(f"{'strategy':<19}{'total':>8}{'range over weekdays':>24}{'last 2 yrs':>12}{'worst drop':>12}{'invested':>10}   ${capital:,.0f} became")
+    print(f"{'strategy':<19}{'total':>8}{'range over start days':>24}{'last 2 yrs':>12}{'worst drop':>12}{'invested':>10}   ${capital:,.0f} became")
     for name, runs, second in rows:
         lo, hi = min(m["total"] for m in runs), max(m["total"] for m in runs)
         rng = f"{lo*100:+.0f}% to {hi*100:+.0f}%" if len(runs) > 1 else ""
         print(f"{name:<19}{med(runs)*100:>+7.0f}%{rng:>24}{med(second)*100:>+11.0f}%{min(m['max_drop'] for m in runs)*100:>11.0f}%"
               f"{np.median([m['invested'] for m in runs])*100:>9.0f}%   ${capital * (1 + med(runs)):,.0f}")
-    print("\n'total' and 'last 2 yrs' are medians over the 5 weekdays; 'worst drop' is the worst of them.")
+    print("\n'total' and 'last 2 yrs' are medians over the start days; 'worst drop' is the worst of them,")
+    print("measured from the account's value every day.")
     print("A strategy worth trusting has a narrow range and does well in the last 2 years too.")
     print("'invested' = average share of the money in stocks (the rest waited in cash).")
     print("Caution: the stock list was picked today from companies that survived and, for many, soared,")

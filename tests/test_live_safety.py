@@ -147,6 +147,7 @@ class LiveSafetyTest(unittest.TestCase):
         self.cfg = yaml.safe_load((ROOT / "config.yaml").read_text())
         self.cfg["claude"]["enabled"] = False
         self.cfg["moomoo"]["fill_wait_seconds"] = 0
+        self.cfg["rebalance_every_days"] = 0              # these tests trade on consecutive runs
         self.cfg["moomoo"]["account_type"] = "TFSA"   # most tests use the TFSA (222); margin tests switch
         self.day = dt.date(2026, 11, 23)
         snap = {t: {"price": p, "dollar_volume_20d": 5e7, "signals": {}} for t, p in PRICES.items()}

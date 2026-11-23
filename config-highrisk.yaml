@@ -13,6 +13,9 @@ capital_usd: 150              # US dollars it manages (for NASDAQ stocks). It ne
                               # Both are read once, when the agent first starts; after that its own
                               # records (state-highrisk/) are what count.
 max_equity_cad: 1000          # never manages more than this (US dollars counted in CAD)
+rebalance_every_days: 28      # trade once every 4 weeks. Running it more often only checks the
+                              # safety rules; it trades when due (or with --force). In the Nov 2026
+                              # backtest, monthly beat daily and weekly for both agents.
 
 momentum:
   max_positions: 4            # hold at most 4 stocks (about 25% each)

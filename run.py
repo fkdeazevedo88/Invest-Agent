@@ -40,6 +40,27 @@ def market_open() -> bool:
     return now.weekday() < 5 and dt.time(9, 35) <= now.time() <= dt.time(15, 55)
 
 
+def last_rebalance(mode: str) -> dt.datetime | None:
+    """When the agent last traded in this mode ("live" or "paper"), or None if never.
+    Paper and live runs share the journal, so each keeps its own schedule."""
+    try:
+        rows = [json.loads(line) for line in JOURNAL.read_text().splitlines() if line.strip()]
+    except OSError:
+        return None
+    rows = [r for r in rows if r.get("mode") == mode]
+    return dt.datetime.fromisoformat(rows[-1]["time"]) if rows else None
+
+
+def next_rebalance(cfg, mode: str = "paper") -> dt.datetime | None:
+    """None if the agent may trade now; otherwise the date it's next due."""
+    every = cfg.get("rebalance_every_days", 0)
+    last = last_rebalance(mode)
+    if not every or last is None:
+        return None
+    due = last + dt.timedelta(days=every) - dt.timedelta(hours=12)   # a little slack for run-time differences
+    return due if dt.datetime.now(dt.timezone.utc) < due else None
+
+
 def recent_decisions(n=3) -> list:
     if not JOURNAL.exists():
         return []
@@ -142,8 +163,16 @@ def cycle(args, cfg):
         slip = cfg["risk"]["limit_slippage"]
         log = {"time": dt.datetime.now(dt.timezone.utc).isoformat(), "mode": "live" if args.live else "paper", "equity_before": round(equity, 2)}
 
-        # Kill switch: deterministic, checked before any model is consulted.
+        # Kill switch: deterministic, checked on every run, before any model is consulted.
         floor = start_capital(broker, fx) * (1 - cfg["risk"]["max_drawdown"])
+        due = next_rebalance(cfg, "live" if args.live else "paper")
+        if equity >= floor and due and not getattr(args, "force", False):
+            when = due.astimezone(ZoneInfo("America/Toronto")).strftime("%a %b %d")
+            if not args.dry_run:
+                print(f"\nNot due yet: this agent trades every {cfg['rebalance_every_days']} days; next on {when}. "
+                      "Safety checks passed. (Use --force to trade now.)")
+                return
+            print(f"\n(Not due until {when}; showing what it would do anyway.)")
         if equity < floor:
             source, rationale, target = "kill-switch", f"equity ${equity:.2f} below floor ${floor:.2f}; selling everything", {}
             if not args.dry_run:
@@ -296,6 +325,7 @@ def main():
     p.add_argument("--dry-run", action="store_true", help="show the decision and orders without placing them")
     p.add_argument("--config", default="config.yaml", help="config file (config-highrisk.yaml for the high-risk agent)")
     p.add_argument("--strategy", default=None, help="backtest only: a strategy name, or 'all' to compare them")
+    p.add_argument("--force", action="store_true", help="trade now even if the agent isn't due yet")
     args = p.parse_args()
     cfg = load_config(ROOT / args.config)
     global STATE, JOURNAL, HALT
