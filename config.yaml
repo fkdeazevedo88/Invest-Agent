@@ -13,7 +13,28 @@ universe:
   - {ticker: ZAG.TO,   moomoo: CA.ZAG,   name: "Canadian aggregate bonds"}
   - {ticker: CGL-C.TO, moomoo: CA.CGL.C, name: "Gold bullion"}
   - {ticker: CASH.TO,  moomoo: CA.CASH,  name: "High-interest savings (cash parking)"}
+  # Higher-risk ETFs (added Nov 2026)
+  - {ticker: XQQ.TO,   moomoo: CA.XQQ,   name: "Nasdaq-100 (CAD hedged, iShares)"}
+  - {ticker: XIT.TO,   moomoo: CA.XIT,   name: "Canadian tech stocks"}
+  - {ticker: XGD.TO,   moomoo: CA.XGD,   name: "Gold miners"}
 cash_ticker: CASH.TO       # exempt from the per-position cap
+
+# How the agent decides: etf_trend (the default) or pullback.
+# Compare them first:  python run.py backtest --strategy all
+strategy: etf_trend
+
+# Rules for the pullback strategy, sized for ETFs. ETFs swing about half as much as
+# single stocks, so the dips are about half those used for stocks in config-highrisk.yaml.
+filters:
+  min_price: 2.0
+  min_dollar_volume: 500000   # ETFs trading at least $0.5M a day
+  max_positions: 4
+pullback:
+  min_6m: 0.05                # only ETFs up at least 5% over 6 months
+  dip_min: 0.03               # buy after a 3% to 10% drop from the 20-day high...
+  dip_max: 0.10
+  max_rsi: 40                 # ...when RSI says it's oversold
+  recovered: 0.01             # sell once it's back within 1% of the high
 
 risk:
   max_position_weight: 0.40   # no single ETF above 40% (except cash_ticker)

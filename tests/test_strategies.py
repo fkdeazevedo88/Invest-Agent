@@ -99,7 +99,38 @@ class StrategyRulesTest(unittest.TestCase):
     def test_config_strategies_and_sectors(self):
         for u in self.cfg["universe"]:
             self.assertTrue(u.get("sector") or u.get("kind") == "leveraged_etf", u["ticker"])
-        self.assertEqual(set(backtest.ALL), set(strategy.STRATEGIES))
+        self.assertEqual(set(backtest.ALL) | set(backtest.ETF_ALL), set(strategy.STRATEGIES))
+
+
+class EtfPullbackTest(unittest.TestCase):
+    """The ETF agent with the pullback strategy, using its ETF-sized dips."""
+
+    def setUp(self):
+        self.cfg = {**run.load_config(ROOT / "config.yaml"), "strategy": "pullback"}
+
+    def test_etf_sized_dips(self):
+        snap = {
+            "XGD.TO": entry(r6=0.30, dd20=-0.05, rsi=35),            # a 5% dip: enough for an ETF
+            "XIU.TO": entry(r6=0.12, dd20=-0.015, rsi=45),           # 1.5%: too small
+            "XEC.TO": entry(r6=0.12, dd20=-0.13, rsi=25),            # 13%: past the 10% limit
+            "CASH.TO": entry(r6=0.02, dd20=0.0, rsi=50),
+        }
+        self.assertEqual(strategy.candidates(snap, self.cfg), ["XGD.TO"])
+
+    def test_the_rest_goes_to_the_cash_etf(self):
+        snap = {"XGD.TO": entry(r6=0.30, dd20=-0.05, rsi=35), "CASH.TO": entry(r6=0.02, dd20=0.0, rsi=50)}
+        w = strategy.sanitize(strategy.baseline(snap, self.cfg), self.cfg, set(snap))
+        self.assertAlmostEqual(w["XGD.TO"], 0.25)
+        self.assertAlmostEqual(w["CASH.TO"], 0.75)
+        snap.update({f"E{i}.TO": entry(r6=0.3 + i / 100, dd20=-0.05, rsi=35) for i in range(6)})
+        w = strategy.sanitize(strategy.baseline(snap, self.cfg), self.cfg, set(snap))
+        self.assertEqual(len([t for t in w if t != "CASH.TO"]), 4)     # the cash ETF isn't a "position"
+        self.assertAlmostEqual(sum(w.values()), 1.0)
+
+    def test_new_etfs_are_in_the_list_and_trend_is_still_the_default(self):
+        tickers = {u["ticker"] for u in run.load_config(ROOT / "config.yaml")["universe"]}
+        self.assertTrue({"XQQ.TO", "XIT.TO", "XGD.TO"} <= tickers)
+        self.assertEqual(run.load_config(ROOT / "config.yaml")["strategy"], "etf_trend")
 
 
 class SignalsTest(unittest.TestCase):

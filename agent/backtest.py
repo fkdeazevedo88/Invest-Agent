@@ -120,7 +120,7 @@ def simulate(cfg: dict, dates: list, info: dict, fx: np.ndarray, start: int = WA
         equity *= 1 + r
         weekly.append(r)
         curve.append(equity)
-        invested.append(sum(weights.values()))
+        invested.append(sum(w for t, w in weights.items() if t != cfg.get("cash_ticker")))   # cash ETF isn't "invested"
     return metrics(curve, weekly, dates[first], dates[min(len(dates) - 1, first + STEP * len(weekly))],
                    extra={"invested": float(np.mean(invested)) if invested else 0.0,
                           "turnover_per_year": turnover_sum / max(1e-9, len(weekly) / 52)})
@@ -162,11 +162,15 @@ def table(rows: list, capital: float) -> str:
     return "\n".join(out)
 
 
+ETF_ALL = ["etf_trend", "pullback"]
+
+
 def main(cfg: dict, which: str | None, cache_dir: Path | None = None):
-    names = ALL if which in (None, "all") else [which]
+    every = ETF_ALL if cfg.get("cash_ticker") else ALL
+    names = every if which in (None, "all") else [which]
     for n in names:
         if n not in strategy.STRATEGIES:
-            raise SystemExit(f"unknown strategy {n!r}; choose from {', '.join(ALL)} or all")
+            raise SystemExit(f"unknown strategy {n!r}; choose from {', '.join(every)} or all")
     cache_dir = cache_dir or Path(__file__).resolve().parent.parent / cfg.get("state_dir", "state")
     cache_dir.mkdir(exist_ok=True)
     print("Loading 5 years of prices (cached for a day)...")

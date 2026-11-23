@@ -90,6 +90,9 @@ NEWS_SOURCES = [
 
 
 STRATEGIES = {
+    "etf_trend": "Spread the money over the ETFs that are in an uptrend (above the 200-day average, positive "
+                 "momentum), giving steadier ones more weight (inverse volatility, max 40% each); the rest "
+                 "goes to the cash ETF.",
     "momentum": "Ride the strongest recent winners: hold the stocks with the biggest 1/3/6-month gains "
                 "that are above their 50- and 200-day averages; sell one that falls stop_loss below its 20-day high.",
     "breakout": "Buy stocks breaking out to new highs: within near_high of their 52-week high, above the "
@@ -118,6 +121,16 @@ def params(cfg: dict, name: str) -> dict:
     return {**DEFAULTS.get(name, {}), **(cfg.get(name) or {})}
 
 
+FILTER_DEFAULTS = {"min_price": 2.0, "min_dollar_volume": 2_000_000, "stop_loss": 0.15, "max_positions": 4,
+                   "research_top": 8}
+
+
+def filters(cfg: dict) -> dict:
+    """Shared rules for the stock-picking strategies. The high-risk config keeps them under
+    `momentum:`; any config can set them under `filters:`."""
+    return {**FILTER_DEFAULTS, **(cfg.get("momentum") or {}), **(cfg.get("filters") or {})}
+
+
 def is_stock_strategy(cfg: dict) -> bool:
     return cfg.get("strategy", "etf_trend") != "etf_trend"
 
@@ -137,12 +150,19 @@ def baseline(snap: dict, cfg: dict, buyable: set | None = None, held: set | None
         parts = params(cfg, "combo")["parts"]
         out = {}
         for part in parts:
-            for t, w in baseline(snap, {**cfg, "strategy": part}, buyable, held).items():
+            for t, w in baseline(snap, {**cfg, "strategy": part, "cash_ticker": None}, buyable, held).items():
                 out[t] = out.get(t, 0.0) + w / len(parts)
+        cash_t = cfg.get("cash_ticker")
+        if cash_t and cash_t in snap:
+            out[cash_t] = out.get(cash_t, 0.0) + max(0.0, 1 - sum(out.values()))
         return out
     picks = candidates(snap, cfg, buyable, held)[: max_positions(cfg)]
     w = min(1 / max(1, max_positions(cfg)), cfg["risk"]["max_position_weight"])
-    return {t: w for t in picks}
+    weights = {t: w for t in picks}
+    cash_t = cfg.get("cash_ticker")
+    if cash_t and cash_t in snap:                     # ETF agent: park the rest in the cash ETF
+        weights[cash_t] = weights.get(cash_t, 0.0) + max(0.0, 1 - sum(weights.values()))
+    return weights
 
 
 def max_positions(cfg: dict) -> int:
@@ -154,7 +174,7 @@ def max_positions(cfg: dict) -> int:
         return p["sectors"] * p["per_sector"]
     if name == "leveraged_trend":
         return params(cfg, name)["max_positions"]
-    return cfg.get("momentum", {}).get("max_positions", 4)
+    return filters(cfg)["max_positions"]
 
 
 def candidates(snap: dict, cfg: dict, buyable: set | None = None, held: set | None = None) -> list[str]:
@@ -194,9 +214,9 @@ def momentum_score(s: dict) -> float:
 def _pool(snap: dict, cfg: dict, buyable, kind: str = "stock"):
     """(ticker, data, signals) for tradable entries of this kind: liquid, not a
     penny stock (in CAD), and affordable if `buyable` is given."""
-    h = cfg["momentum"]
+    h = filters(cfg)
     for t, d in snap.items():
-        if d.get("kind", "stock") != kind or (buyable is not None and t not in buyable):
+        if d.get("kind", "stock") != kind or (buyable is not None and t not in buyable) or t == cfg.get("cash_ticker"):
             continue
         if (d.get("price_cad", d["price"]) >= h["min_price"]
                 and d.get("dollar_volume_cad", d["dollar_volume_20d"]) >= h["min_dollar_volume"]):
@@ -205,7 +225,7 @@ def _pool(snap: dict, cfg: dict, buyable, kind: str = "stock"):
 
 def momentum_candidates(snap: dict, cfg: dict, buyable: set | None = None, held: set | None = None) -> list[str]:
     """Stocks in an uptrend that haven't hit the stop-loss, strongest momentum first."""
-    stop = cfg["momentum"]["stop_loss"]
+    stop = filters(cfg)["stop_loss"]
     out = [t for t, d, s in _pool(snap, cfg, buyable)
            if s["above_50d_avg"] and s["above_200d_avg"] and s["ret_6m"] > 0 and s["drawdown_from_20d_high"] > -stop]
     return sorted(out, key=lambda t: momentum_score(snap[t]["signals"]), reverse=True)
@@ -216,7 +236,7 @@ def momentum_baseline(snap: dict, cfg: dict, buyable: set | None = None) -> dict
 
 
 def breakout_candidates(snap, cfg, buyable=None, held=frozenset()):
-    p, stop = params(cfg, "breakout"), cfg["momentum"]["stop_loss"]
+    p, stop = params(cfg, "breakout"), filters(cfg)["stop_loss"]
     out = []
     for t, d, s in _pool(snap, cfg, buyable):
         band = p["hold_band"] if t in held else p["near_high"]
@@ -242,7 +262,7 @@ def pullback_candidates(snap, cfg, buyable=None, held=frozenset()):
 
 
 def sector_rotation_candidates(snap, cfg, buyable=None, held=frozenset()):
-    p, stop = params(cfg, "sector_rotation"), cfg["momentum"]["stop_loss"]
+    p, stop = params(cfg, "sector_rotation"), filters(cfg)["stop_loss"]
     sectors = {}
     for t, d, s in _pool(snap, cfg, None):                 # rank sectors on all their stocks
         sectors.setdefault(d.get("sector") or "other", []).append(t)
@@ -265,7 +285,7 @@ def sector_rotation_candidates(snap, cfg, buyable=None, held=frozenset()):
 
 
 def leveraged_candidates(snap, cfg, buyable=None, held=frozenset()):
-    stop = cfg["momentum"]["stop_loss"]
+    stop = filters(cfg)["stop_loss"]
     out = [t for t, d, s in _pool(snap, cfg, buyable, kind="leveraged_etf")
            if s["above_50d_avg"] and s["above_200d_avg"] and s["ret_3m"] > 0 and s["drawdown_from_20d_high"] > -stop]
     return sorted(out, key=lambda t: snap[t]["signals"]["ret_3m"], reverse=True)
@@ -283,8 +303,9 @@ def sanitize(weights: dict, cfg: dict, allowed: set | None = None) -> dict:
             continue
         out[t] = min(float(w), 1.0 if t == cash_t else cap)
     max_n = max_positions(cfg) if is_stock_strategy(cfg) else None
-    if max_n and len(out) > max_n:
-        out = dict(sorted(out.items(), key=lambda x: -x[1])[:max_n])
+    if max_n and len([t for t in out if t != cash_t]) > max_n:
+        keep = sorted((t for t in out if t != cash_t), key=lambda t: -out[t])[:max_n]
+        out = {t: w for t, w in out.items() if t in keep or t == cash_t}
     total = sum(out.values())
     if total > 1:
         out = {t: w / total for t, w in out.items()}

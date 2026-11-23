@@ -13,11 +13,31 @@ decides target weights, and places whole-share limit orders. By default it trade
 3. **Claude (optional).** If `ANTHROPIC_API_KEY` is set, Claude sees the signals, your holdings, the
    baseline and its own last 3 decisions, then proposes weights with a written rationale. If Claude
    fails, the agent uses the baseline.
-4. **Guardrails (code, not AI).** Only the 8 ETFs in `config.yaml` can be bought. No single ETF can go
+4. **Guardrails (code, not AI).** Only the 11 ETFs in `config.yaml` can be bought. No single ETF can go
    above 40% (cash excepted). No leverage, no shorting, no options. Small trades are skipped, and the
    agent never manages more than `max_equity_cad`, even if the account holds more.
 
 Every run is logged to `state/journal.jsonl`.
+
+### Which ETF list and strategy? (backtest, Nov 23, 2026)
+
+In Nov 2026 three higher-risk ETFs were added: XQQ (Nasdaq-100), XIT (Canadian tech) and XGD (gold
+miners). The agent can also use the `pullback` strategy, with dips sized for ETFs (3-10%, about half
+the size used for single stocks, because ETFs swing about half as much). Compare them yourself with
+`python run.py backtest --strategy all`.
+
+| Weekly, Dec 2022 - Nov 2026, $1,000 start | Total | Worst drop | 1st half | 2nd half | Became |
+|---|---|---|---|---|---|
+| A. Old list (8 ETFs), trend | +57% | -6% | +26% | +15% | $1,569 |
+| **B. New list (11 ETFs), trend (in use)** | **+67%** | **-7%** | +31% | +19% | **$1,667** |
+| C. New list, pullback | +20% | -8% | +19% | +7% | $1,199 |
+| Just hold XIU | +94% | -10% | +32% | +42% | $1,943 |
+
+B did best of the three. Pullback barely invested (about 17% of the time) because ETFs rarely dip
+3-10% while staying strong, so its money mostly waited in the cash ETF; other dip sizes gave about
+the same result. None of the three beat simply holding XIU: the trend strategy is smoother (worst
+drop -7% vs -10%) but earns less, partly because it often keeps up to 40% in bonds (ZAG). The new
+ETFs were picked in 2026, after strong runs, so B's edge over A is slightly flattered.
 
 ## Setup
 

@@ -173,7 +173,7 @@ def cycle(args, cfg):
                     research = ""
                     if momentum and cfg["claude"].get("web_search"):
                         print("\nClaude is checking world news and news on the candidates...")
-                        research = strategy.research_news(candidates[: cfg["momentum"]["research_top"]], cfg)
+                        research = strategy.research_news(candidates[: strategy.filters(cfg)["research_top"]], cfg)
                     current = {t: v / equity for t, v in value.items()}
                     raw, why = strategy.claude_weights(snap, current, base, recent_decisions(), cfg, candidates, research)
                     target, source, rationale = strategy.sanitize(raw, cfg, allowed), "claude", why
