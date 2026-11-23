@@ -3,7 +3,8 @@
 # losing 30-50% of this money is possible. Only use money you can afford to lose.
 name: HIGH-RISK agent
 state_dir: state-highrisk     # its own records, separate from the ETF agent
-strategy: momentum
+strategy: momentum            # momentum, breakout, pullback, sector_rotation, leveraged_trend, or combo
+                              # (compare them first: python run.py backtest --config config-highrisk.yaml --strategy all)
 
 capital_cad: 500              # Canadian dollars this agent manages (for TSX stocks)
 capital_usd: 150              # US dollars it manages (for NASDAQ stocks). It never converts currency
@@ -19,6 +20,24 @@ momentum:
   min_dollar_volume: 2000000  # at least $2M CAD traded per day, so orders fill near the price
   stop_loss: 0.15             # sell a stock that falls 15% below its 20-day high
   research_top: 8             # how many candidates Claude researches in the news
+
+# Settings for the other strategies (see STRATEGIES in agent/strategy.py for what each does).
+breakout:
+  near_high: 0.03             # buy within 3% of the 52-week high
+  hold_band: 0.12             # keep while within 12% of it
+pullback:
+  min_6m: 0.10                # only stocks up at least 10% over 6 months
+  dip_min: 0.07               # buy after a 7% to 20% drop from the 20-day high...
+  dip_max: 0.20
+  max_rsi: 40                 # ...when RSI says it's oversold
+  recovered: 0.02             # sell once it's back within 2% of the high
+sector_rotation:
+  sectors: 2                  # the 2 hottest sectors
+  per_sector: 2               # the 2 strongest stocks in each
+leveraged_trend:
+  max_positions: 2
+combo:
+  parts: [momentum, pullback] # split the money evenly across these
 
 risk:
   max_position_weight: 0.30   # no single stock above 30%
@@ -52,86 +71,90 @@ exclude: [ENB.TO, BN.TO, BAM.TO, BEP-UN.TO, BIP-UN.TO, VFV.TO, ZQQ.TO, XIU.TO, X
 # Liquid, volatile stocks. TSX ones trade in CAD (moomoo CA.<symbol>); entries with
 # market: US are NASDAQ stocks in USD (moomoo US.<symbol>).
 universe:
-  - {ticker: SHOP.TO, name: Shopify (e-commerce software)}
-  - {ticker: LSPD.TO, name: Lightspeed (payments software)}
-  - {ticker: DCBO.TO, name: Docebo (learning software)}
-  - {ticker: CLS.TO,  name: Celestica (electronics, AI hardware)}
-  - {ticker: BB.TO,   name: BlackBerry (security software)}
-  - {ticker: KXS.TO,  name: Kinaxis (supply-chain software)}
-  - {ticker: HUT.TO,  name: Hut 8 (bitcoin mining, AI data centres)}
-  - {ticker: CCO.TO,  name: Cameco (uranium)}
-  - {ticker: NXE.TO,  name: NexGen Energy (uranium)}
-  - {ticker: DML.TO,  name: Denison Mines (uranium)}
-  - {ticker: EFR.TO,  name: Energy Fuels (uranium, rare earths)}
-  - {ticker: K.TO,    name: Kinross Gold}
-  - {ticker: AEM.TO,  name: Agnico Eagle (gold)}
-  - {ticker: ABX.TO,  name: Barrick (gold, copper)}
-  - {ticker: EQX.TO,  name: Equinox Gold}
-  - {ticker: IMG.TO,  name: IAMGOLD}
-  - {ticker: BTO.TO,  name: B2Gold}
-  - {ticker: ELD.TO,  name: Eldorado Gold}
-  - {ticker: OGC.TO,  name: OceanaGold}
-  - {ticker: DPM.TO,  name: Dundee Precious Metals (gold)}
-  - {ticker: WPM.TO,  name: Wheaton Precious Metals (streaming)}
-  - {ticker: PAAS.TO, name: Pan American Silver}
-  - {ticker: FVI.TO,  name: Fortuna Mining (gold, silver)}
-  - {ticker: EDV.TO,  name: Endeavour Mining (gold)}
-  - {ticker: SSRM.TO, name: SSR Mining (gold)}
-  - {ticker: AYA.TO,  name: Aya Gold & Silver}
-  - {ticker: FM.TO,   name: First Quantum (copper)}
-  - {ticker: IVN.TO,  name: Ivanhoe Mines (copper)}
-  - {ticker: LUN.TO,  name: Lundin Mining (copper)}
-  - {ticker: CS.TO,   name: Capstone Copper}
-  - {ticker: HBM.TO,  name: Hudbay Minerals (copper)}
-  - {ticker: ERO.TO,  name: Ero Copper}
-  - {ticker: TKO.TO,  name: Taseko Mines (copper)}
-  - {ticker: CVE.TO,  name: Cenovus (oil)}
-  - {ticker: BTE.TO,  name: Baytex (oil)}
-  - {ticker: WCP.TO,  name: Whitecap (oil and gas)}
-  - {ticker: ATH.TO,  name: Athabasca Oil}
-  - {ticker: TVE.TO,  name: Tamarack Valley (oil)}
-  - {ticker: KEL.TO,  name: Kelt Exploration (natural gas)}
-  - {ticker: TOU.TO,  name: Tourmaline (natural gas)}
-  - {ticker: ACB.TO,  name: Aurora Cannabis}
-  - {ticker: ATZ.TO,  name: Aritzia (clothing)}
-  - {ticker: GOOS.TO, name: Canada Goose (clothing)}
+  - {ticker: SHOP.TO, sector: software, name: Shopify (e-commerce software)}
+  - {ticker: LSPD.TO, sector: software, name: Lightspeed (payments software)}
+  - {ticker: DCBO.TO, sector: software, name: Docebo (learning software)}
+  - {ticker: CLS.TO, sector: chips_hardware,  name: Celestica (electronics, AI hardware)}
+  - {ticker: BB.TO, sector: software,   name: BlackBerry (security software)}
+  - {ticker: KXS.TO, sector: software,  name: Kinaxis (supply-chain software)}
+  - {ticker: HUT.TO, sector: crypto_fintech,  name: Hut 8 (bitcoin mining, AI data centres)}
+  - {ticker: CCO.TO, sector: uranium,  name: Cameco (uranium)}
+  - {ticker: NXE.TO, sector: uranium,  name: NexGen Energy (uranium)}
+  - {ticker: DML.TO, sector: uranium,  name: Denison Mines (uranium)}
+  - {ticker: EFR.TO, sector: uranium,  name: Energy Fuels (uranium, rare earths)}
+  - {ticker: K.TO, sector: gold_silver,    name: Kinross Gold}
+  - {ticker: AEM.TO, sector: gold_silver,  name: Agnico Eagle (gold)}
+  - {ticker: ABX.TO, sector: gold_silver,  name: Barrick (gold, copper)}
+  - {ticker: EQX.TO, sector: gold_silver,  name: Equinox Gold}
+  - {ticker: IMG.TO, sector: gold_silver,  name: IAMGOLD}
+  - {ticker: BTO.TO, sector: gold_silver,  name: B2Gold}
+  - {ticker: ELD.TO, sector: gold_silver,  name: Eldorado Gold}
+  - {ticker: OGC.TO, sector: gold_silver,  name: OceanaGold}
+  - {ticker: DPM.TO, sector: gold_silver,  name: Dundee Precious Metals (gold)}
+  - {ticker: WPM.TO, sector: gold_silver,  name: Wheaton Precious Metals (streaming)}
+  - {ticker: PAAS.TO, sector: gold_silver, name: Pan American Silver}
+  - {ticker: FVI.TO, sector: gold_silver,  name: Fortuna Mining (gold, silver)}
+  - {ticker: EDV.TO, sector: gold_silver,  name: Endeavour Mining (gold)}
+  - {ticker: SSRM.TO, sector: gold_silver, name: SSR Mining (gold)}
+  - {ticker: AYA.TO, sector: gold_silver,  name: Aya Gold & Silver}
+  - {ticker: FM.TO, sector: copper,   name: First Quantum (copper)}
+  - {ticker: IVN.TO, sector: copper,  name: Ivanhoe Mines (copper)}
+  - {ticker: LUN.TO, sector: copper,  name: Lundin Mining (copper)}
+  - {ticker: CS.TO, sector: copper,   name: Capstone Copper}
+  - {ticker: HBM.TO, sector: copper,  name: Hudbay Minerals (copper)}
+  - {ticker: ERO.TO, sector: copper,  name: Ero Copper}
+  - {ticker: TKO.TO, sector: copper,  name: Taseko Mines (copper)}
+  - {ticker: CVE.TO, sector: oil_gas,  name: Cenovus (oil)}
+  - {ticker: BTE.TO, sector: oil_gas,  name: Baytex (oil)}
+  - {ticker: WCP.TO, sector: oil_gas,  name: Whitecap (oil and gas)}
+  - {ticker: ATH.TO, sector: oil_gas,  name: Athabasca Oil}
+  - {ticker: TVE.TO, sector: oil_gas,  name: Tamarack Valley (oil)}
+  - {ticker: KEL.TO, sector: oil_gas,  name: Kelt Exploration (natural gas)}
+  - {ticker: TOU.TO, sector: oil_gas,  name: Tourmaline (natural gas)}
+  - {ticker: ACB.TO, sector: consumer,  name: Aurora Cannabis}
+  - {ticker: ATZ.TO, sector: consumer,  name: Aritzia (clothing)}
+  - {ticker: GOOS.TO, sector: consumer, name: Canada Goose (clothing)}
   # NASDAQ (US dollars)
-  - {ticker: "NVDA", market: US, name: Nvidia (AI chips)}
-  - {ticker: "AMD", market: US, name: AMD (chips)}
-  - {ticker: "TSLA", market: US, name: Tesla (electric cars)}
-  - {ticker: "PLTR", market: US, name: Palantir (AI software)}
-  - {ticker: "META", market: US, name: Meta (Facebook, Instagram)}
-  - {ticker: "AMZN", market: US, name: Amazon}
-  - {ticker: "NFLX", market: US, name: Netflix}
-  - {ticker: "AVGO", market: US, name: Broadcom (chips)}
-  - {ticker: "MU", market: US, name: Micron (memory chips)}
-  - {ticker: "SMCI", market: US, name: Super Micro (AI servers)}
-  - {ticker: "COIN", market: US, name: Coinbase (crypto exchange)}
-  - {ticker: "MSTR", market: US, name: Strategy (bitcoin holder)}
-  - {ticker: "HOOD", market: US, name: Robinhood (trading app)}
-  - {ticker: "CRWD", market: US, name: CrowdStrike (security)}
-  - {ticker: "DDOG", market: US, name: Datadog (cloud software)}
-  - {ticker: "ARM", market: US, name: Arm (chip designs)}
-  - {ticker: "MRVL", market: US, name: Marvell (chips)}
-  - {ticker: "APP", market: US, name: AppLovin (ad software)}
-  - {ticker: "RKLB", market: US, name: Rocket Lab (space)}
-  - {ticker: "IONQ", market: US, name: IonQ (quantum computing)}
-  - {ticker: "SOFI", market: US, name: SoFi (online bank)}
-  - {ticker: "AFRM", market: US, name: Affirm (buy now pay later)}
-  - {ticker: "MDB", market: US, name: MongoDB (databases)}
-  - {ticker: "ZS", market: US, name: Zscaler (security)}
-  - {ticker: "PANW", market: US, name: Palo Alto Networks (security)}
-  - {ticker: "TTD", market: US, name: The Trade Desk (ads)}
-  - {ticker: "ASML", market: US, name: ASML (chip machines)}
-  - {ticker: "LULU", market: US, name: Lululemon (clothing)}
-  - {ticker: "INTC", market: US, name: Intel (chips)}
-  - {ticker: "GOOGL", market: US, name: Alphabet (Google)}
-  - {ticker: "AAPL", market: US, name: Apple}
-  - {ticker: "MSFT", market: US, name: Microsoft}
-  - {ticker: "QCOM", market: US, name: Qualcomm (chips)}
-  - {ticker: "ON", market: US, name: ON Semiconductor}
-  - {ticker: "LRCX", market: US, name: Lam Research (chip machines)}
-  - {ticker: "AMAT", market: US, name: Applied Materials (chip machines)}
-  - {ticker: "ABNB", market: US, name: Airbnb}
-  - {ticker: "DASH", market: US, name: DoorDash}
-  - {ticker: "UPST", market: US, name: Upstart (AI lending)}
+  - {ticker: "NVDA", sector: chips_hardware, market: US, name: Nvidia (AI chips)}
+  - {ticker: "AMD", sector: chips_hardware, market: US, name: AMD (chips)}
+  - {ticker: "TSLA", sector: future_tech, market: US, name: Tesla (electric cars)}
+  - {ticker: "PLTR", sector: software, market: US, name: Palantir (AI software)}
+  - {ticker: "META", sector: big_tech, market: US, name: Meta (Facebook, Instagram)}
+  - {ticker: "AMZN", sector: big_tech, market: US, name: Amazon}
+  - {ticker: "NFLX", sector: big_tech, market: US, name: Netflix}
+  - {ticker: "AVGO", sector: chips_hardware, market: US, name: Broadcom (chips)}
+  - {ticker: "MU", sector: chips_hardware, market: US, name: Micron (memory chips)}
+  - {ticker: "SMCI", sector: chips_hardware, market: US, name: Super Micro (AI servers)}
+  - {ticker: "COIN", sector: crypto_fintech, market: US, name: Coinbase (crypto exchange)}
+  - {ticker: "MSTR", sector: crypto_fintech, market: US, name: Strategy (bitcoin holder)}
+  - {ticker: "HOOD", sector: crypto_fintech, market: US, name: Robinhood (trading app)}
+  - {ticker: "CRWD", sector: software, market: US, name: CrowdStrike (security)}
+  - {ticker: "DDOG", sector: software, market: US, name: Datadog (cloud software)}
+  - {ticker: "ARM", sector: chips_hardware, market: US, name: Arm (chip designs)}
+  - {ticker: "MRVL", sector: chips_hardware, market: US, name: Marvell (chips)}
+  - {ticker: "APP", sector: software, market: US, name: AppLovin (ad software)}
+  - {ticker: "RKLB", sector: future_tech, market: US, name: Rocket Lab (space)}
+  - {ticker: "IONQ", sector: future_tech, market: US, name: IonQ (quantum computing)}
+  - {ticker: "SOFI", sector: crypto_fintech, market: US, name: SoFi (online bank)}
+  - {ticker: "AFRM", sector: crypto_fintech, market: US, name: Affirm (buy now pay later)}
+  - {ticker: "MDB", sector: software, market: US, name: MongoDB (databases)}
+  - {ticker: "ZS", sector: software, market: US, name: Zscaler (security)}
+  - {ticker: "PANW", sector: software, market: US, name: Palo Alto Networks (security)}
+  - {ticker: "TTD", sector: software, market: US, name: The Trade Desk (ads)}
+  - {ticker: "ASML", sector: chips_hardware, market: US, name: ASML (chip machines)}
+  - {ticker: "LULU", sector: consumer, market: US, name: Lululemon (clothing)}
+  - {ticker: "INTC", sector: chips_hardware, market: US, name: Intel (chips)}
+  - {ticker: "GOOGL", sector: big_tech, market: US, name: Alphabet (Google)}
+  - {ticker: "AAPL", sector: big_tech, market: US, name: Apple}
+  - {ticker: "MSFT", sector: big_tech, market: US, name: Microsoft}
+  - {ticker: "QCOM", sector: chips_hardware, market: US, name: Qualcomm (chips)}
+  - {ticker: "ON", sector: chips_hardware, market: US, name: ON Semiconductor}
+  - {ticker: "LRCX", sector: chips_hardware, market: US, name: Lam Research (chip machines)}
+  - {ticker: "AMAT", sector: chips_hardware, market: US, name: Applied Materials (chip machines)}
+  - {ticker: "ABNB", sector: consumer, market: US, name: Airbnb}
+  - {ticker: "DASH", sector: consumer, market: US, name: DoorDash}
+  - {ticker: "UPST", sector: crypto_fintech, market: US, name: Upstart (AI lending)}
+  # Leveraged ETFs: used ONLY by the leveraged_trend strategy (and combos that include it).
+  # They move 2-3x the NASDAQ-100 each day, up AND down, and lose value in choppy markets.
+  - {ticker: QQU.TO, kind: leveraged_etf, name: Global X 2x NASDAQ-100 Daily Bull (CAD)}
+  - {ticker: "TQQQ", market: US, kind: leveraged_etf, name: ProShares 3x NASDAQ-100 (USD)}

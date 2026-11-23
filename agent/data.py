@@ -47,7 +47,11 @@ def signals(closes: list[float]) -> dict:
         return last / closes[-1 - days] - 1
 
     daily = [closes[i] / closes[i - 1] - 1 for i in range(len(closes) - 60, len(closes))]
+    moves = daily[-14:]
+    gain = sum(m for m in moves if m > 0) / 14
+    loss = -sum(m for m in moves if m < 0) / 14
     return {
+        "ret_5d": ret(5),
         "ret_1m": ret(21),
         "ret_3m": ret(63),
         "ret_6m": ret(126),
@@ -57,6 +61,7 @@ def signals(closes: list[float]) -> dict:
         "vol_60d_annual": statistics.stdev(daily) * math.sqrt(252),
         "drawdown_from_20d_high": last / max(closes[-20:]) - 1,
         "drawdown_from_1y_high": last / max(closes[-252:]) - 1,
+        "rsi_14": 100.0 if loss == 0 else 100 - 100 / (1 + gain / loss),  # 0-100; under 30 = oversold
     }
 
 

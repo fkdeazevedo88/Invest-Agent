@@ -135,15 +135,23 @@ CRON_TZ=America/Toronto
 
 ## High-risk agent (optional)
 
-A second, separate agent for a small amount of money you can afford to lose. It holds up to 4
-individual TSX or NASDAQ stocks with the strongest recent price momentum (tech, AI chips, uranium,
-gold, copper, oil), from the list in `config-highrisk.yaml`.
+A second, separate agent for a small amount of money you can afford to lose. It holds a few
+individual TSX or NASDAQ stocks (tech, AI chips, uranium, gold, copper, oil; the list, with each
+stock's sector, is in `config-highrisk.yaml`), or leveraged NASDAQ-100 ETFs, picked by one of six
+strategies (`strategy:` in the config):
 
-**How it picks:** every run it scans the list and keeps only stocks that are above $2, trade at
-least $2M a day, are above their 50- and 200-day averages, are up over 6 months, and haven't
-fallen 15% from their 20-day high, and that it can afford at least one share of. It buys the
-strongest four, about 25% each, and leaves the rest in cash. A stock that breaks a rule (for
-example falls 15% from its recent high) is sold on the next run.
+| Strategy | Idea |
+|---|---|
+| `momentum` (default) | Hold the 4 strongest recent winners that are still trending up; sell one that falls 15% from its 20-day high. |
+| `breakout` | Buy stocks hitting new 52-week highs; keep them while they stay within 12% of the high. |
+| `pullback` | Buy the dip in strong stocks: up 10%+ over 6 months but recently down 7-20% and oversold (RSI under 40); sell when they bounce back near the high, or if the drop goes past 20%. |
+| `sector_rotation` | Find the 2 hottest sectors (gold, uranium, chips, software...) and hold the 2 strongest stocks in each. |
+| `leveraged_trend` | Hold QQU (2x NASDAQ-100, CAD) and TQQQ (3x, USD) only while they're in an uptrend; otherwise cash. |
+| `combo` | Split the money evenly across several strategies (default: momentum + pullback). |
+
+Every strategy only buys stocks above $2 that trade at least $2M a day and that it can afford at
+least one share of, holds at most a few positions (no stock above 30%), keeps the rest in cash, and
+sells a holding once it no longer passes its rules. Each strategy's settings are in the config.
 
 **News check (optional, needs an Anthropic API key).** Before deciding, Claude searches the web for
 the big picture (trade and tariffs between countries, the Bank of Canada and the US Federal
@@ -167,17 +175,32 @@ the ETF agent's funds (`exclude` in the config). Only one agent runs at a time, 
 spend the same cash. If moomoo ever shows fewer shares of a stock than its records say it owns, it
 stops trading that stock until you check. Its kill switch is at -40%.
 
-**Past results of these rules, honestly** (TSX list only, Dec 2022 to Nov 2026, weekly, before taxes):
+**Compare the strategies on past prices before choosing:**
 
-| | High-risk rules | Just holding XIU |
-|---|---|---|
-| Total | +44% (+10%/yr) | +94% (+19%/yr) |
-| Worst drop from a peak | -39% | much smaller |
-| Best / worst week | +17% / -18% | |
+```bash
+.venv/bin/python run.py backtest --config config-highrisk.yaml --strategy all
+```
 
-Over this period it made **less** than simply holding the Canadian market, with much bigger swings.
-These results are also flattered: the stock list was chosen today, from companies that survived.
-High risk does not mean high reward; it means a wider range of outcomes, good and bad.
+Result on Nov 23, 2026 (weekly, in CAD, after trading costs, $1,000 start):
+
+| Strategy | Total (3.8 yrs) | Worst drop | 1st half (Dec 2022 - Nov 2024) | 2nd half (Nov 2024 - Nov 2026) |
+|---|---|---|---|---|
+| momentum | +726% | -47% | +337% | **-49%** |
+| breakout | +512% | -52% | +295% | -4% |
+| pullback | +1072% | -33% | +332% | **+42%** |
+| sector_rotation | +174% | -37% | +171% | -50% |
+| leveraged_trend | +64% | -20% | +50% | -1% |
+| combo (momentum + pullback) | +701% | -40% | +320% | -17% |
+| just hold XIU (TSX) | +94% | -10% | +32% | +42% |
+| just hold QQQ (NASDAQ) | +150% | -22% | +85% | +34% |
+
+**Read this table with care.** The huge totals come almost entirely from the first half, and they
+are mostly hindsight: the NASDAQ list was chosen in 2026 and includes stocks that are now known to
+have soared (Palantir, AppLovin, Strategy, Rocket Lab...). On the TSX list alone, momentum made
++44% over the whole period, less than holding XIU. In the last two years, every high-risk strategy
+did worse than or the same as simply holding the market, and momentum lost about half its money.
+`pullback` is the only one that made money in both halves. High risk does not mean high reward;
+it means a wider range of outcomes, good and bad.
 
 Run it on pretend money first:
 

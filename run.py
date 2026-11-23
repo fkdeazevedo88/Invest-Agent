@@ -9,6 +9,9 @@
 
 Add --config config-highrisk.yaml to any command to use the HIGH-RISK stock agent
 instead of the ETF agent. Each agent has its own money, records and state folder.
+
+  python run.py backtest --config config-highrisk.yaml --strategy all
+                                compare the high-risk strategies on past prices
 """
 import argparse
 import datetime as dt
@@ -113,7 +116,8 @@ def cycle(args, cfg):
 
     tickers = [u["ticker"] for u in cfg["universe"]]
     currencies = {u["ticker"]: currency_of(u) for u in cfg["universe"]}
-    momentum = cfg.get("strategy") == "momentum"
+    info = {u["ticker"]: u for u in cfg["universe"]}
+    momentum = strategy.is_stock_strategy(cfg)        # individual stocks / leveraged ETFs
 
     broker = MoomooBroker(cfg, STATE) if args.live else PaperBroker(cfg, STATE)
     try:
@@ -123,7 +127,8 @@ def cycle(args, cfg):
         snap = data.snapshot(tickers, skip_missing=momentum, currencies=currencies)
         for tk, d in snap.items():
             c = currencies[tk]
-            d.update(currency=c, price_cad=d["price"] * fx[c], dollar_volume_cad=d["dollar_volume_20d"] * fx[c])
+            d.update(currency=c, price_cad=d["price"] * fx[c], dollar_volume_cad=d["dollar_volume_20d"] * fx[c],
+                     sector=info[tk].get("sector"), kind=info[tk].get("kind", "stock"))
         prices = {tk: d["price"] for tk, d in snap.items()}          # in each stock's own currency
         prices_cad = {tk: d["price_cad"] for tk, d in snap.items()}
         a = account(broker, prices, fx, cfg)
@@ -146,19 +151,20 @@ def cycle(args, cfg):
             if momentum:
                 # A stock can only be picked if the agent could afford at least one share
                 # of it, in that stock's own currency, within one position's budget.
-                n = cfg["momentum"]["max_positions"]
+                n = strategy.max_positions(cfg)
                 per_position = min(1 / n, cfg["risk"]["max_position_weight"]) * min(equity, cfg["max_equity_cad"])
                 in_cur = {c: v for c, v in cash.items()}
                 for tk, q in pos.items():
                     in_cur[currencies.get(tk, "CAD")] = in_cur.get(currencies.get(tk, "CAD"), 0) + q * prices[tk]
                 buyable = {tk for tk, d in snap.items()
                            if tk in pos or (d["price_cad"] <= per_position and d["price"] <= in_cur.get(d["currency"], 0))}
-            candidates = strategy.momentum_candidates(snap, cfg, buyable) if momentum else None
+            held = set(pos)
+            candidates = strategy.candidates(snap, cfg, buyable, held) if momentum else None
             allowed = set(candidates) if momentum else None
-            base = strategy.sanitize(strategy.baseline(snap, cfg, buyable=buyable), cfg, allowed)
+            base = strategy.sanitize(strategy.baseline(snap, cfg, buyable=buyable, held=held), cfg, allowed)
             if momentum:
-                rationale = (f"strongest momentum among {len(candidates)} stocks passing the filters"
-                             if candidates else "no stock passes the filters; staying in cash")
+                rationale = (f"{strategy.describe(cfg)}: top picks among {len(candidates)} that pass its rules"
+                             if candidates else f"{strategy.describe(cfg)}: nothing passes its rules; staying in cash")
             else:
                 rationale = "trend filter + inverse-volatility baseline"
             source, target = "rules", base
@@ -258,10 +264,11 @@ def load_config(path: Path) -> dict:
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("command", choices=["run", "status", "accounts"])
+    p.add_argument("command", choices=["run", "status", "accounts", "backtest"])
     p.add_argument("--live", action="store_true", help="use the real moomoo account (real money)")
     p.add_argument("--dry-run", action="store_true", help="show the decision and orders without placing them")
     p.add_argument("--config", default="config.yaml", help="config file (config-highrisk.yaml for the high-risk agent)")
+    p.add_argument("--strategy", default=None, help="backtest only: a strategy name, or 'all' to compare them")
     args = p.parse_args()
     cfg = load_config(ROOT / args.config)
     global STATE, JOURNAL, HALT
@@ -269,6 +276,10 @@ def main():
     JOURNAL, HALT = STATE / "journal.jsonl", STATE / "HALT"
     print(f"[{cfg.get('name', 'ETF agent')}]")
     STATE.mkdir(exist_ok=True)
+    if args.command == "backtest":
+        from agent import backtest
+        backtest.main(cfg, args.strategy)
+        return
     if args.command == "accounts":
         try:
             print(list_accounts(cfg))

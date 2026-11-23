@@ -1,9 +1,9 @@
 """Deciding target weights: a rules baseline, optionally refined by Claude.
 
-Two strategies, picked by `strategy:` in the config file:
+Picked by `strategy:` in the config file:
   etf_trend  (default)  diversified ETFs, trend filter + inverse volatility
-  momentum              HIGH RISK: a few individual stocks with the strongest
-                        recent momentum, with liquidity and stop-loss filters
+  HIGH RISK (individual stocks / leveraged ETFs), described in STRATEGIES below:
+  momentum, breakout, pullback, sector_rotation, leveraged_trend, combo
 """
 import json
 
@@ -26,14 +26,14 @@ weights must sum to at most 1."""
 
 MOMENTUM_SYSTEM = """You manage a small, deliberately HIGH-RISK, long-only sleeve of TSX (CAD) and NASDAQ (USD) stocks for
 a Canadian retail investor who chose high risk for a chance at higher returns and accepts large
-losses. You receive momentum candidates that already passed the code's filters (liquid, above $2,
-in an uptrend, not in a sharp recent drop, affordable), the current holdings, a rules-based baseline
-(the strongest momentum names, equal weight), your recent decisions, and news research covering
+losses. You receive the candidates that passed the configured strategy's filters (described in
+strategy_rules; all liquid, above $2 and affordable), the current holdings, the rules-based baseline
+(the strategy's top picks, equal weight), your recent decisions, and news research covering
 both the big picture (economy, trade and tariffs, central banks, tensions and politics between
 countries, commodities, CAD/USD) and each candidate. Reply with target weights.
 
 How to think about it:
-- This sleeve rides strong price trends in a few stocks. The baseline is a sound default; deviate
+- Follow the strategy's logic (strategy_rules). The baseline is a sound default; deviate
   only for a concrete reason, mainly news: drop a candidate facing a known negative event (fraud
   allegations, a failed deal, a dilutive financing, a guidance cut, a takeover already priced in),
   or one directly exposed to a specific, reported big-picture threat (for example new tariffs on
@@ -89,10 +89,85 @@ NEWS_SOURCES = [
 ]
 
 
-def baseline(snap: dict, cfg: dict, buyable: set | None = None) -> dict:
-    if cfg.get("strategy", "etf_trend") == "momentum":
-        return momentum_baseline(snap, cfg, buyable)
-    return etf_baseline(snap, cfg)
+STRATEGIES = {
+    "momentum": "Ride the strongest recent winners: hold the stocks with the biggest 1/3/6-month gains "
+                "that are above their 50- and 200-day averages; sell one that falls stop_loss below its 20-day high.",
+    "breakout": "Buy stocks breaking out to new highs: within near_high of their 52-week high, above the "
+                "50-day average and up over 3 months; keep them while they stay within hold_band of the high.",
+    "pullback": "Buy the dip in strong stocks: up at least min_6m over 6 months and above the 200-day average, "
+                "but recently down dip_min to dip_max from the 20-day high with RSI under max_rsi; sell once "
+                "they recover to within `recovered` of the high, or if the dip deepens past dip_max.",
+    "sector_rotation": "Bet on the hottest sectors: rank sectors (gold, uranium, chips, software...) by the "
+                       "median momentum of their stocks, then hold the strongest per_sector stocks in each of "
+                       "the top `sectors` sectors.",
+    "leveraged_trend": "Hold leveraged NASDAQ-100 ETFs (QQU 2x, TQQQ 3x) only while they are in an uptrend "
+                       "(above 50- and 200-day averages, up over 3 months); otherwise stay in cash.",
+    "combo": "Split the money evenly across several of the strategies above (combo.parts).",
+}
+
+DEFAULTS = {
+    "breakout": {"near_high": 0.03, "hold_band": 0.12},
+    "pullback": {"min_6m": 0.10, "dip_min": 0.07, "dip_max": 0.20, "max_rsi": 40, "recovered": 0.02},
+    "sector_rotation": {"sectors": 2, "per_sector": 2},
+    "leveraged_trend": {"max_positions": 2},
+    "combo": {"parts": ["momentum", "pullback"]},
+}
+
+
+def params(cfg: dict, name: str) -> dict:
+    return {**DEFAULTS.get(name, {}), **(cfg.get(name) or {})}
+
+
+def is_stock_strategy(cfg: dict) -> bool:
+    return cfg.get("strategy", "etf_trend") != "etf_trend"
+
+
+def describe(cfg: dict) -> str:
+    name = cfg.get("strategy", "etf_trend")
+    if name == "combo":
+        return "combo of " + ", ".join(params(cfg, "combo")["parts"])
+    return name
+
+
+def baseline(snap: dict, cfg: dict, buyable: set | None = None, held: set | None = None) -> dict:
+    name = cfg.get("strategy", "etf_trend")
+    if name == "etf_trend":
+        return etf_baseline(snap, cfg)
+    if name == "combo":
+        parts = params(cfg, "combo")["parts"]
+        out = {}
+        for part in parts:
+            for t, w in baseline(snap, {**cfg, "strategy": part}, buyable, held).items():
+                out[t] = out.get(t, 0.0) + w / len(parts)
+        return out
+    picks = candidates(snap, cfg, buyable, held)[: max_positions(cfg)]
+    w = min(1 / max(1, max_positions(cfg)), cfg["risk"]["max_position_weight"])
+    return {t: w for t in picks}
+
+
+def max_positions(cfg: dict) -> int:
+    name = cfg.get("strategy", "etf_trend")
+    if name == "combo":
+        return sum(max_positions({**cfg, "strategy": part}) for part in params(cfg, "combo")["parts"])
+    if name == "sector_rotation":
+        p = params(cfg, name)
+        return p["sectors"] * p["per_sector"]
+    if name == "leveraged_trend":
+        return params(cfg, name)["max_positions"]
+    return cfg.get("momentum", {}).get("max_positions", 4)
+
+
+def candidates(snap: dict, cfg: dict, buyable: set | None = None, held: set | None = None) -> list[str]:
+    """Every stock the configured strategy would consider right now, best first."""
+    name = cfg.get("strategy", "etf_trend")
+    if name == "combo":
+        out = []
+        for part in params(cfg, "combo")["parts"]:
+            out += [t for t in candidates(snap, {**cfg, "strategy": part}, buyable, held) if t not in out]
+        return out
+    fn = {"momentum": momentum_candidates, "breakout": breakout_candidates, "pullback": pullback_candidates,
+          "sector_rotation": sector_rotation_candidates, "leveraged_trend": leveraged_candidates}[name]
+    return fn(snap, cfg, buyable, held or set())
 
 
 def etf_baseline(snap: dict, cfg: dict) -> dict:
@@ -116,36 +191,84 @@ def momentum_score(s: dict) -> float:
     return 0.5 * s["ret_3m"] + 0.3 * s["ret_6m"] + 0.2 * s["ret_1m"]
 
 
-def momentum_candidates(snap: dict, cfg: dict, buyable: set | None = None) -> list[str]:
-    """Stocks that pass every filter, strongest momentum first. Prices and traded
-    value are compared in CAD. `buyable`, if given, limits the list to stocks the
-    agent can afford at least one share of."""
+def _pool(snap: dict, cfg: dict, buyable, kind: str = "stock"):
+    """(ticker, data, signals) for tradable entries of this kind: liquid, not a
+    penny stock (in CAD), and affordable if `buyable` is given."""
     h = cfg["momentum"]
-    out = []
     for t, d in snap.items():
-        s = d["signals"]
-        if buyable is not None and t not in buyable:
+        if d.get("kind", "stock") != kind or (buyable is not None and t not in buyable):
             continue
-        if (
-            d.get("price_cad", d["price"]) >= h["min_price"]
-            and d.get("dollar_volume_cad", d["dollar_volume_20d"]) >= h["min_dollar_volume"]
-            and s["above_50d_avg"]
-            and s["above_200d_avg"]
-            and s["ret_6m"] > 0
-            and s["drawdown_from_20d_high"] > -h["stop_loss"]
-        ):
-            out.append(t)
+        if (d.get("price_cad", d["price"]) >= h["min_price"]
+                and d.get("dollar_volume_cad", d["dollar_volume_20d"]) >= h["min_dollar_volume"]):
+            yield t, d, d["signals"]
+
+
+def momentum_candidates(snap: dict, cfg: dict, buyable: set | None = None, held: set | None = None) -> list[str]:
+    """Stocks in an uptrend that haven't hit the stop-loss, strongest momentum first."""
+    stop = cfg["momentum"]["stop_loss"]
+    out = [t for t, d, s in _pool(snap, cfg, buyable)
+           if s["above_50d_avg"] and s["above_200d_avg"] and s["ret_6m"] > 0 and s["drawdown_from_20d_high"] > -stop]
     return sorted(out, key=lambda t: momentum_score(snap[t]["signals"]), reverse=True)
 
 
 def momentum_baseline(snap: dict, cfg: dict, buyable: set | None = None) -> dict:
-    """Equal weight in the top N candidates; whatever isn't invested stays cash.
-    A held stock drops out (and is sold) once it fails a filter, e.g. falls more
-    than stop_loss below its 20-day high."""
-    n = cfg["momentum"]["max_positions"]
-    picks = momentum_candidates(snap, cfg, buyable)[:n]
-    w = min(1 / n, cfg["risk"]["max_position_weight"])
-    return {t: w for t in picks}
+    return baseline(snap, {**cfg, "strategy": "momentum"}, buyable)
+
+
+def breakout_candidates(snap, cfg, buyable=None, held=frozenset()):
+    p, stop = params(cfg, "breakout"), cfg["momentum"]["stop_loss"]
+    out = []
+    for t, d, s in _pool(snap, cfg, buyable):
+        band = p["hold_band"] if t in held else p["near_high"]
+        if (s["drawdown_from_1y_high"] >= -band and s["above_50d_avg"] and s["ret_3m"] > 0
+                and s["drawdown_from_20d_high"] > -stop):
+            out.append(t)
+    return sorted(out, key=lambda t: snap[t]["signals"]["ret_3m"], reverse=True)
+
+
+def pullback_candidates(snap, cfg, buyable=None, held=frozenset()):
+    p = params(cfg, "pullback")
+    out = []
+    for t, d, s in _pool(snap, cfg, buyable):
+        dd = s["drawdown_from_20d_high"]
+        strong = s["above_200d_avg"] and s["ret_6m"] >= p["min_6m"]
+        if t in held:
+            keep = strong and -p["dip_max"] <= dd <= -p["recovered"]     # still dipped, not broken
+        else:
+            keep = strong and -p["dip_max"] <= dd <= -p["dip_min"] and s["rsi_14"] <= p["max_rsi"]
+        if keep:
+            out.append(t)
+    return sorted(out, key=lambda t: snap[t]["signals"]["ret_6m"], reverse=True)
+
+
+def sector_rotation_candidates(snap, cfg, buyable=None, held=frozenset()):
+    p, stop = params(cfg, "sector_rotation"), cfg["momentum"]["stop_loss"]
+    sectors = {}
+    for t, d, s in _pool(snap, cfg, None):                 # rank sectors on all their stocks
+        sectors.setdefault(d.get("sector") or "other", []).append(t)
+    ranked = []
+    for name, ts in sectors.items():
+        if len(ts) < 2 or name == "other":
+            continue
+        scores = sorted(momentum_score(snap[t]["signals"]) for t in ts)
+        median = scores[len(scores) // 2]
+        uptrend = sum(snap[t]["signals"]["above_200d_avg"] for t in ts) / len(ts)
+        if median > 0 and uptrend >= 0.5:
+            ranked.append((median, name))
+    out = []
+    for _, name in sorted(ranked, reverse=True)[: p["sectors"]]:
+        picks = [t for t in sectors[name] if (buyable is None or t in buyable)
+                 and snap[t]["signals"]["above_50d_avg"] and snap[t]["signals"]["above_200d_avg"]
+                 and snap[t]["signals"]["drawdown_from_20d_high"] > -stop]
+        out += sorted(picks, key=lambda t: momentum_score(snap[t]["signals"]), reverse=True)[: p["per_sector"]]
+    return out
+
+
+def leveraged_candidates(snap, cfg, buyable=None, held=frozenset()):
+    stop = cfg["momentum"]["stop_loss"]
+    out = [t for t, d, s in _pool(snap, cfg, buyable, kind="leveraged_etf")
+           if s["above_50d_avg"] and s["above_200d_avg"] and s["ret_3m"] > 0 and s["drawdown_from_20d_high"] > -stop]
+    return sorted(out, key=lambda t: snap[t]["signals"]["ret_3m"], reverse=True)
 
 
 def sanitize(weights: dict, cfg: dict, allowed: set | None = None) -> dict:
@@ -159,7 +282,7 @@ def sanitize(weights: dict, cfg: dict, allowed: set | None = None) -> dict:
         if t not in allowed or not isinstance(w, (int, float)) or w != w or w <= 0:
             continue
         out[t] = min(float(w), 1.0 if t == cash_t else cap)
-    max_n = cfg.get("momentum", {}).get("max_positions")
+    max_n = max_positions(cfg) if is_stock_strategy(cfg) else None
     if max_n and len(out) > max_n:
         out = dict(sorted(out.items(), key=lambda x: -x[1])[:max_n])
     total = sum(out.values())
@@ -214,7 +337,7 @@ def claude_weights(snap: dict, current: dict, base: dict, history: list, cfg: di
         weights: list[Weight]
         rationale: str
 
-    momentum = cfg.get("strategy") == "momentum"
+    momentum = is_stock_strategy(cfg)
     names = {u["ticker"]: u.get("name", u["ticker"]) for u in cfg["universe"]}
     shown = candidates if momentum else list(snap)
     payload = {
@@ -230,7 +353,9 @@ def claude_weights(snap: dict, current: dict, base: dict, history: list, cfg: di
         "your_recent_decisions": history,
     }
     if momentum:
-        payload["max_positions"] = cfg["momentum"]["max_positions"]
+        payload["strategy"] = describe(cfg)
+        payload["strategy_rules"] = STRATEGIES.get(cfg.get("strategy"), "")
+        payload["max_positions"] = max_positions(cfg)
         payload["news_research"] = research or "no research available"
     else:
         payload["cash_etf"] = cfg["cash_ticker"]
