@@ -4,3 +4,4 @@ state-*/
 run.lock
 __pycache__/
 *.tmp
+ntfy-topic.txt

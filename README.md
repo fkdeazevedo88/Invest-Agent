@@ -279,3 +279,42 @@ Run it on pretend money first:
 Live (real money), exactly like the ETF agent, with `--config config-highrisk.yaml` added. It
 trades every 28 days; running it in between only checks the safety rules. Keep enough CAD cash in the account for both agents (`capital_cad` of each), or the second one
 will buy less.
+
+## Research agent (paper trading only)
+
+One US stock at a time, picked by Claude's research and confirmed by a chart checklist, traded on
+**moomoo paper trading only**. There is no real-money option in this agent: every call to moomoo is
+hard-coded to the paper environment, and it refuses to start without a US paper account. Nothing runs
+by itself and it needs no API key: you run it from **Claude Code on your own computer** (where OpenD
+runs), using your Claude subscription.
+
+**Every morning (around 8 AM Eastern), in Claude Code opened in this folder, type: `run the research`.**
+Claude follows `.claude/skills/run-the-research/SKILL.md`:
+
+1. `python research.py status`: checks whether a waiting buy filled (and if so immediately sets the +7%
+   sell and the -5% stop at moomoo, good till cancelled, retrying any that isn't in place yet), books any
+   sale as a win or loss, sells after 10 trading days, and says whether to research. Holding a stock =
+   just a progress report.
+2. If the whole market is falling (S&P 500 under its 50-day average), it waits.
+3. Claude researches press releases (GlobeNewswire, PR Newswire, Business Wire), trusted news and SEC
+   filings, for companies worth over $300 million with a real reason to rise 7%+ soon, growing revenue,
+   enough cash, and no red flags (heavy debt, lawsuits, new shares being sold). At least 5 candidates.
+4. `python research.py signals A B C D E`: the free chart checklist (RSI 40-65 and never over 70,
+   above the 20- and 50-day averages, MACD, volume, ATR, beating the S&P 500, Bollinger squeeze, 7% room
+   to the old high, analyst upgrades). A stock passes with no "never buy" rule broken and at least 6 of
+   8 positive signals.
+5. `python research.py buy TICKER ...`: re-checks every rule in code, then places a limit order with up
+   to US$200 of paper money (pre-market if the one-time paper test showed it's allowed, otherwise it
+   fills at the 9:30 AM open), writes the plain-English reason to the log, and sends an ntfy alert.
+   Or `python research.py skip ...` when nothing is strong enough.
+
+**Phone alerts (ntfy):** install the ntfy app, pick a long, hard-to-guess channel name, subscribe to it
+in the app, and put that name on one line in a file called `ntfy-topic.txt` in this folder. That file
+stays on your computer and is never uploaded (anyone who knows the name can read your alerts). Since
+nothing runs by itself, a sale that moomoo makes on its own (+7% or -5%) is reported the next time you
+run the research. The log is `state-research/research-log.md`; `python research.py log` shows it with
+the win/loss count.
+
+One-time setup: in the moomoo app open **Paper Trading** and start a **US stock** paper account; then,
+between 4:00 and 9:30 AM ET with OpenD open, run `python research.py test-paper AAPL` (places a tiny
+paper order far below the price and cancels it) to learn whether paper accepts pre-market orders.

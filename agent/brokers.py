@@ -182,7 +182,7 @@ def open_trade_context(m: dict):
     import moomoo as mm
 
     return mm.OpenSecTradeContext(
-        filter_trdmarket=mm.TrdMarket.CA, host=m["host"], port=m["port"],
+        filter_trdmarket=getattr(mm.TrdMarket, m.get("market", "CA")), host=m["host"], port=m["port"],
         security_firm=getattr(mm.SecurityFirm, m["security_firm"]),
     )
 

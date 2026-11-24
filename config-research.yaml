@@ -1,0 +1,33 @@
+# ---- RESEARCH agent: one US stock at a time, moomoo PAPER trading only ----
+# Run it from Claude Code on your computer: type "run the research".
+# Nothing runs by itself, and it never uses real money (paper only, built into the code).
+name: RESEARCH agent (paper)
+state_dir: state-research
+
+capital_usd: 200              # paper US dollars it manages; never more than this in one stock
+min_market_cap_usd: 300000000 # only companies worth more than $300 million
+min_price: 5.0                # no penny stocks
+take_profit: 0.07             # sell at +7%
+stop_loss: 0.05               # stop loss at -5%
+max_hold_days: 10             # otherwise sell after 10 trading days
+limit_slippage: 0.005         # limit orders at most 0.5% from the latest price
+
+signals:
+  rsi_min: 40                 # RSI between 40 and 65 is good...
+  rsi_max: 65
+  rsi_block: 70               # ...over 70: never buy
+  min_volume_ratio: 1.2       # "more volume than usual" = at least 1.2x its 20-day average
+  min_atr_pct: 0.025          # must normally move at least 2.5% a day to reach 7% in 1-2 weeks
+  max_above_upper_band: 0.03  # skip if more than 3% above the top Bollinger band
+  min_positive: 6             # buy only with at least 6 of the 8 positive signals (and no "never buy" rule)
+
+moomoo:
+  host: 127.0.0.1
+  port: 11111                 # OpenD on this computer
+  security_firm: FUTUCA       # Moomoo Financial Canada
+  acc_id: 0                   # 0 = the first US paper account; set it if you have several
+
+ntfy:
+  server: https://ntfy.sh
+  topic: ""                   # leave empty: the secret channel name goes in ntfy-topic.txt
+                              # (one line, kept on your computer only, never uploaded)
